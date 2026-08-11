@@ -604,6 +604,22 @@ async function loadTodayRecitations(){
   }catch(e){ return []; }
 }
 
+async function loadTodaySharedJournals(){
+  try{
+    const list = await window.storage.list(`share:${today}:`, true);
+    if(!list || !list.keys) return [];
+    const items = [];
+    for(const k of list.keys){
+      try{
+        const r = await window.storage.get(k, true);
+        if(r && r.value) items.push(JSON.parse(r.value));
+      }catch(e){}
+    }
+    items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
+    return items;
+  }catch(e){ return []; }
+}
+
 async function pingWeeklyCompletion(recited){
   const profile = await loadProfile();
   if(!profile || !profile.name) return;
@@ -781,28 +797,98 @@ function renderStep(){
   }
 
   else if(currentStep === 2){
+    const defaultQs = [...reflectQs, GENERIC_Q];
+    const qs = (state.reflectQuestions && state.reflectQuestions.length === defaultQs.length)
+      ? state.reflectQuestions : defaultQs;
+    const answers = (state.answers && state.answers.length === qs.length) ? state.answers : qs.map(()=>"");
+
     content.innerHTML = `
       <div class="eyebrow">오늘의 기록</div>
-      <h2 class="block-title">마음에 남은 것을 적어보세요</h2>
-      <label class="field-label">묵상하며 든 생각</label>
-      <textarea id="journalInput" placeholder="오늘 이 말씀을 통해 느낀 점을 적어보세요.">${state.journal || ""}</textarea>
+      <h2 class="block-title">질문에 답하며 마음에 남은 것을 적어보세요</h2>
+      ${qs.map((q,i)=>`
+        <div class="q-edit-card">
+          <div class="q-edit-label">Q${i+1}. ${escapeHtml(q)}</div>
+          <textarea class="answer-input" data-idx="${i}" placeholder="답을 적어보세요.">${escapeHtml(answers[i] || "")}</textarea>
+        </div>
+      `).join("")}
       <label class="field-label">오늘의 기도 / 다짐</label>
       <textarea id="prayerInput" placeholder="오늘 하루를 위한 짧은 기도나 다짐을 적어보세요.">${state.prayer || ""}</textarea>
+
+      <div class="q-edit-card" style="padding:14px 16px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; font-size:14px; color:var(--ink); cursor:pointer;">
+          <input type="checkbox" id="shareCheck" style="margin-top:3px;" ${state.shareJournal ? "checked" : ""}>
+          <span>이 답변들을 오늘 참여자들과 나누기<br><span style="font-size:12px; color:var(--ink-soft);">체크하면 이름과 함께 공개돼요. 기도 내용은 공유되지 않아요.</span></span>
+        </label>
+        <div id="shareNameWrap" style="display:none; margin-top:10px;">
+          <input type="text" id="shareNameInput" placeholder="나눔에 표시할 이름" maxlength="20"
+            style="width:100%; border:1px solid #EFE7D6; border-radius:10px; padding:10px 12px; font-size:14px;">
+        </div>
+      </div>
     `;
     bar.innerHTML = `
       <button class="btn btn-ghost" id="backBtn">이전</button>
       <button class="btn btn-primary" id="nextBtn">암송하러 가기</button>
     `;
+    (async () => {
+      const profile = await loadProfile();
+      const shareCheck = document.getElementById("shareCheck");
+      const nameWrap = document.getElementById("shareNameWrap");
+      const nameInput = document.getElementById("shareNameInput");
+      const syncNameVisibility = () => {
+        nameWrap.style.display = (shareCheck.checked && !(profile && profile.name)) ? "block" : "none";
+      };
+      syncNameVisibility();
+      shareCheck.onchange = syncNameVisibility;
+      if(profile && profile.name && nameInput) nameInput.value = profile.name;
+    })();
+
+    function collectAnswers(){
+      return Array.from(document.querySelectorAll(".answer-input"))
+        .sort((a,b)=> Number(a.dataset.idx) - Number(b.dataset.idx))
+        .map(el=>el.value);
+    }
+    function buildJournalText(qList, ansList){
+      return qList.map((q,i)=> `Q${i+1}. ${q}\n${(ansList[i]||"").trim()}`).join("\n\n");
+    }
+
     document.getElementById("backBtn").onclick = () => {
-      state.journal = document.getElementById("journalInput").value;
+      state.answers = collectAnswers();
+      state.journal = buildJournalText(qs, state.answers);
       state.prayer = document.getElementById("prayerInput").value;
+      state.shareJournal = document.getElementById("shareCheck").checked;
       saveState();
       currentStep = 1; renderStep();
     };
     document.getElementById("nextBtn").onclick = async () => {
-      state.journal = document.getElementById("journalInput").value;
+      state.answers = collectAnswers();
+      state.journal = buildJournalText(qs, state.answers);
       state.prayer = document.getElementById("prayerInput").value;
       state.read = true;
+      const wantsShare = document.getElementById("shareCheck").checked;
+      state.shareJournal = wantsShare;
+
+      const hasAnyAnswer = state.answers.some(a => a && a.trim());
+      if(wantsShare && hasAnyAnswer){
+        let profile = await loadProfile();
+        if(!profile || !profile.name){
+          const typedName = (document.getElementById("shareNameInput").value || "").trim();
+          if(typedName) profile = await saveProfile({name: typedName});
+        }
+        if(profile && profile.name){
+          const key = `share:${today}:${slugifyName(profile.name)}`;
+          const payload = {
+            name: profile.name,
+            ref: verse.ref,
+            journal: state.journal.trim(),
+            submittedAt: new Date().toISOString()
+          };
+          try{
+            await window.storage.set(key, JSON.stringify(payload), true);
+            state.journalShared = true;
+          }catch(e){ console.error("journal share failed", e); }
+        }
+      }
+
       await saveState();
       currentStep = 3;
       renderStep();
@@ -1002,6 +1088,12 @@ async function renderReciteStep(){
     <button class="skip-link" id="skipBtn">오늘은 녹음 없이 건너뛸게요</button>
 
     <div class="board-head">
+      <h2 class="block-title" style="margin:0;">오늘의 묵상 나눔</h2>
+      <span class="board-count" id="journalBoardCount">불러오는 중…</span>
+    </div>
+    <div id="journalBoardList"><div class="loading" style="height:auto; padding:30px 0;">불러오는 중…</div></div>
+
+    <div class="board-head">
       <h2 class="block-title" style="margin:0;">오늘의 암송 게시판</h2>
       <span class="board-count" id="boardCount">불러오는 중…</span>
     </div>
@@ -1045,6 +1137,7 @@ async function renderReciteStep(){
   };
 
   loadAndRenderBoard(profile.name);
+  loadAndRenderJournalBoard(profile.name);
 }
 
 async function startRecording(){
@@ -1199,6 +1292,34 @@ async function awardDailyPoints(recited){
   state.pointsGained = gained;
   state.totalScoreAfter = runningTotal;
   await saveState();
+}
+
+async function loadAndRenderJournalBoard(myName){
+  const board = await loadTodaySharedJournals();
+  const countEl = document.getElementById("journalBoardCount");
+  const listEl = document.getElementById("journalBoardList");
+  if(!countEl || !listEl) return;
+  countEl.textContent = `${board.length}명 나눔`;
+  if(board.length === 0){
+    listEl.innerHTML = `<div class="empty-state" style="margin-top:20px;">아직 나눈 묵상이 없어요.<br>기록 단계에서 나누기를 체크해보세요.</div>`;
+    return;
+  }
+  listEl.innerHTML = board.map(item=>{
+    const initial = item.name ? item.name.trim()[0] : "?";
+    const isMe = item.name === myName;
+    const t = item.submittedAt ? new Date(item.submittedAt) : null;
+    const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
+    return `
+      <div class="board-item">
+        <div class="avatar" style="background:${nameColor(item.name || "?")}">${escapeHtml(initial)}</div>
+        <div class="board-body">
+          <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
+          <div class="board-time">${timeStr}</div>
+          <div style="font-size:13.5px; color:var(--ink); line-height:1.6; margin-top:2px;">${escapeHtml(item.journal || "")}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function loadAndRenderBoard(myName){
