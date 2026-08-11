@@ -758,20 +758,22 @@ function renderStep(){
     sun.style.transform = state.completed ? "translateY(-30px) scale(1.1)" : `translateY(${20 - currentStep*14}px)`;
   }
 
-  if(state.completed && currentStep < 4){ currentStep = 4; }
-
   if(currentStep === 0){
     content.innerHTML = `
       <div class="eyebrow">오늘의 말씀</div>
+      ${state.completed ? `<div class="confirmed-tag" style="margin-bottom:14px;">✓ 오늘 묵상을 이미 완료했어요</div>` : ''}
       <div class="verse-card">
         <div class="verse-text">${verse.text}</div>
         <div class="verse-ref">${verse.ref}</div>
         <span class="theme-tag">#${verse.theme}</span>
       </div>
       <label class="field-label" style="margin-top:22px;">천천히 두세 번 소리 내어 읽어보세요. 마음에 머무는 단어나 구절이 있다면 기억해두세요.</label>
+      ${state.completed ? `<button class="chip-btn" id="viewResultBtn" style="margin-top:16px;">📊 오늘 결과 · 연속 기록 보기</button>` : ''}
     `;
     bar.innerHTML = `<button class="btn btn-primary" id="nextBtn">묵상으로 이동</button>`;
     document.getElementById("nextBtn").onclick = () => { currentStep = 1; renderStep(); };
+    const viewResultBtn = document.getElementById("viewResultBtn");
+    if(viewResultBtn) viewResultBtn.onclick = () => { currentStep = 4; renderStep(); };
   }
 
   else if(currentStep === 1){
@@ -1395,7 +1397,6 @@ function escapeHtml(s){
 
 (async function init(){
   await loadState();
-  if(state.completed) currentStep = 4;
   render();
 })();
 </script>
