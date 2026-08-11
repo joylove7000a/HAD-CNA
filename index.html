@@ -250,9 +250,19 @@
 
   .practice-card{
     background:linear-gradient(180deg, #fff, var(--paper-dim)); border:1px solid #EADFC8; border-radius:var(--radius);
-    padding:22px; margin-bottom:16px;
+    padding:22px; margin-bottom:16px; position:relative;
   }
-  .practice-verse{font-family:'Noto Serif KR', serif; font-size:19px; line-height:1.85; color:var(--ink);}
+  .practice-verse{font-family:'Noto Serif KR', serif; font-size:19px; line-height:1.85; color:var(--ink); transition:filter 0.3s ease, opacity 0.3s ease;}
+  .practice-card.recording-hide .practice-verse{filter:blur(10px); opacity:0.35; user-select:none;}
+  .practice-card.recording-hide .practice-controls{visibility:hidden;}
+  .record-veil{
+    display:none; position:absolute; inset:0; border-radius:var(--radius);
+    flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:6px;
+    background:rgba(251,246,236,0.35); backdrop-filter:blur(1px);
+  }
+  .practice-card.recording-hide .record-veil{display:flex;}
+  .record-veil-icon{font-size:26px;}
+  .record-veil-text{font-size:13px; color:var(--ink-soft); font-weight:600; padding:0 20px;}
   .word{cursor:pointer; border-bottom:2px dotted transparent; padding:0 1px;}
   .word.blank{background:var(--paper-dim); border-radius:4px; color:transparent; text-shadow:none; border-bottom:2px dotted var(--blush);}
   .word.blank::selection{background:transparent;}
@@ -965,11 +975,15 @@ async function renderReciteStep(){
   hiddenWords = new Set();
   content.innerHTML = `
     <div class="eyebrow">오늘의 말씀 암송</div>
-    <div class="practice-card">
+    <div class="practice-card" id="practiceCard">
       <div class="practice-verse" id="practiceVerse">${wordsHtml(verse.text)}</div>
       <div class="practice-controls">
         <button class="chip-btn" id="hideBtn">일부 가리고 연습</button>
         <button class="chip-btn" id="showBtn">전체 보기</button>
+      </div>
+      <div class="record-veil" id="recordVeil">
+        <div class="record-veil-icon">🙈</div>
+        <div class="record-veil-text">암송 중에는 말씀이 가려져요<br>기억나는 대로 말해보세요</div>
       </div>
     </div>
 
@@ -1061,6 +1075,9 @@ async function startRecording(){
   mediaRecorder.onstop = onRecordingStop;
   mediaRecorder.start();
 
+  const practiceCard = document.getElementById("practiceCard");
+  if(practiceCard) practiceCard.classList.add("recording-hide");
+
   recordSeconds = 0;
   micVisual.classList.add("recording");
   micVisual.textContent = "●";
@@ -1090,6 +1107,8 @@ async function onRecordingStop(){
   const recStatus = document.getElementById("recStatus");
   const recBtnRow = document.getElementById("recBtnRow");
   if(micVisual){ micVisual.classList.remove("recording"); micVisual.textContent = "🎙️"; }
+  const practiceCard = document.getElementById("practiceCard");
+  if(practiceCard) practiceCard.classList.remove("recording-hide");
 
   const blob = new Blob(recordedChunks, {type: mediaRecorder.mimeType || 'audio/webm'});
   recordedDataUrl = await new Promise((resolve,reject)=>{
