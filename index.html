@@ -830,6 +830,8 @@ function wordsHtml(text){
   }).join("");
 }
 
+const ADMIN_NAME = "청지기";
+
 async function renderReflectStep(){
   const content = document.getElementById("content");
   const bar = document.getElementById("bottomBar");
@@ -849,8 +851,34 @@ async function renderReflectStep(){
     ? shared.questions
     : defaultQs;
 
+  const profile = await loadProfile();
+  const isAdmin = !!(profile && profile.name === ADMIN_NAME);
+
+  if(!isAdmin){
+    // 읽기 전용: 청지기가 아니면 질문을 보기만 함
+    content.innerHTML = `
+      <div class="eyebrow">묵상 질문</div>
+      <h2 class="block-title">"${verse.ref.split(" ")[0]}" 말씀 앞에 잠시 머물러요</h2>
+      ${shared ? `<div class="confirmed-tag">✓ ${escapeHtml(shared.editedBy || ADMIN_NAME)}님이 오늘 이 질문으로 확정했어요</div>` : ''}
+      ${currentQs.map((q,i)=>`<div class="q-item"><b>Q${i+1}.</b>${escapeHtml(q)}</div>`).join("")}
+    `;
+    bar.innerHTML = `
+      <button class="btn btn-ghost" id="backBtn">이전</button>
+      <button class="btn btn-primary" id="nextBtn">기록하러 가기</button>
+    `;
+    document.getElementById("backBtn").onclick = () => { currentStep = 0; renderStep(); };
+    document.getElementById("nextBtn").onclick = () => {
+      state.reflectQuestions = currentQs;
+      state.reflectConfirmed = true;
+      saveState();
+      currentStep = 2;
+      renderStep();
+    };
+    return;
+  }
+
   content.innerHTML = `
-    <div class="eyebrow">묵상 질문</div>
+    <div class="eyebrow">묵상 질문 · 관리자 편집</div>
     <h2 class="block-title">"${verse.ref.split(" ")[0]}" 말씀 앞에 잠시 머물러요</h2>
     ${shared ? `<div class="confirmed-tag">✓ ${escapeHtml(shared.editedBy || "누군가")}님이 오늘 이 질문으로 확정했어요</div>` : ''}
     <div class="confirm-hint">여기서 질문을 고치면 오늘 하루 동안 모든 참여자에게 똑같이 보여요. 확인을 눌러야 반영돼요.</div>
@@ -876,10 +904,9 @@ async function renderReflectStep(){
       const v = el.value.trim();
       return v || defaultQs[Number(el.dataset.idx)];
     });
-    const profile = await loadProfile();
     const payload = {
       questions: edited,
-      editedBy: profile && profile.name ? profile.name : "익명",
+      editedBy: profile && profile.name ? profile.name : ADMIN_NAME,
       editedAt: new Date().toISOString()
     };
     try{
