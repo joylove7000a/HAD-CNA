@@ -253,7 +253,13 @@
     padding:22px; margin-bottom:16px; position:relative;
   }
   .practice-verse{font-family:'Noto Serif KR', serif; font-size:19px; line-height:1.85; color:var(--ink); transition:filter 0.3s ease, opacity 0.3s ease;}
-  .practice-card.recording-hide .practice-verse{filter:blur(10px); opacity:0.35; user-select:none;}
+  .practice-verse-ref{
+    margin-top:12px; font-size:13px; color:var(--ink-soft); font-weight:600;
+    display:flex; align-items:center; gap:8px; transition:filter 0.3s ease, opacity 0.3s ease;
+  }
+  .practice-verse-ref::before{content:""; width:16px; height:1px; background:var(--blush); display:inline-block;}
+  .practice-card.recording-hide .practice-verse,
+  .practice-card.recording-hide .practice-verse-ref{filter:blur(10px); opacity:0.35; user-select:none;}
   .practice-card.recording-hide .practice-controls{visibility:hidden;}
   .record-veil{
     display:none; position:absolute; inset:0; border-radius:var(--radius);
@@ -588,9 +594,9 @@ function nameColor(name){
   return colors[Math.abs(h) % colors.length];
 }
 
-async function loadTodayRecitations(){
+async function loadRecitationsForDate(dateStr){
   try{
-    const list = await window.storage.list(`recite:${today}:`, true);
+    const list = await window.storage.list(`recite:${dateStr}:`, true);
     if(!list || !list.keys) return [];
     const items = [];
     for(const k of list.keys){
@@ -601,6 +607,18 @@ async function loadTodayRecitations(){
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
     return items;
+  }catch(e){ return []; }
+}
+async function loadTodayRecitations(){
+  return loadRecitationsForDate(today);
+}
+async function loadAllRecitationDates(){
+  try{
+    const list = await window.storage.list("recite:", true);
+    if(!list || !list.keys) return [];
+    const dates = list.keys.map(k => k.replace(/^recite:/, "")).filter(Boolean);
+    dates.sort((a,b)=> a < b ? 1 : -1);
+    return dates;
   }catch(e){ return []; }
 }
 
@@ -723,6 +741,7 @@ function render(){
           <div class="greeting">오늘도<br>주님과 함께 걸어요</div>
         </div>
         <div style="display:flex; gap:8px;">
+          <button class="icon-btn" id="allRecBtn" aria-label="모두의 암송 보관함">🎧</button>
           <button class="icon-btn" id="weekBtn" aria-label="이번 주 도전 보기">🏆</button>
           <button class="icon-btn" id="archiveBtn" aria-label="지난 기록 보기">☰</button>
         </div>
@@ -752,6 +771,14 @@ function render(){
       </div>
       <div class="overlay-body" id="weekBody"></div>
     </div>
+
+    <div class="overlay" id="allRecOverlay">
+      <div class="overlay-head">
+        <button class="icon-btn" id="closeAllRec" style="background:#EFE7D6; color:#2B2420;" aria-label="닫기">✕</button>
+        <h2>모두의 암송 보관함</h2>
+      </div>
+      <div class="overlay-body" id="allRecBody"></div>
+    </div>
   `;
 
   renderStep();
@@ -762,6 +789,10 @@ function render(){
   document.getElementById("weekBtn").onclick = openWeekly;
   document.getElementById("closeWeek").onclick = () => {
     document.getElementById("weekOverlay").classList.remove("active");
+  };
+  document.getElementById("allRecBtn").onclick = openAllRecitations;
+  document.getElementById("closeAllRec").onclick = () => {
+    document.getElementById("allRecOverlay").classList.remove("active");
   };
 }
 
@@ -1065,6 +1096,7 @@ async function renderReciteStep(){
     <div class="eyebrow">오늘의 말씀 암송</div>
     <div class="practice-card" id="practiceCard">
       <div class="practice-verse" id="practiceVerse">${wordsHtml(verse.text)}</div>
+      <div class="practice-verse-ref">${escapeHtml(verse.ref)}</div>
       <div class="practice-controls">
         <button class="chip-btn" id="hideBtn">일부 가리고 연습</button>
         <button class="chip-btn" id="showBtn">전체 보기</button>
@@ -1487,6 +1519,46 @@ async function openWeekly(){
       점수 안내 · 묵상 완료 +10점 · 암송 녹음 제출 +5점 · 연속 3일마다 +5점 보너스 · 주간 개근(7/7) +30점 보너스
     </div>
   `;
+}
+
+async function openAllRecitations(){
+  const overlay = document.getElementById("allRecOverlay");
+  const body = document.getElementById("allRecBody");
+  overlay.classList.add("active");
+  body.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
+
+  const profile = await loadProfile();
+  const dates = await loadAllRecitationDates();
+  if(dates.length === 0){
+    body.innerHTML = `<div class="empty-state">아직 등록된 암송 녹음이 없어요.</div>`;
+    return;
+  }
+
+  const capped = dates.slice(0, 30); // 최근 30일치까지만 표시
+  let html = "";
+  for(const d of capped){
+    const items = await loadRecitationsForDate(d);
+    if(items.length === 0) continue;
+    const dt = new Date(d + "T00:00:00");
+    html += `<h2 class="block-title" style="margin-top:22px;">${d} (${weekdayKo(dt)})</h2>`;
+    html += items.map(item=>{
+      const initial = item.name ? item.name.trim()[0] : "?";
+      const isMe = profile && item.name === profile.name;
+      const t = item.submittedAt ? new Date(item.submittedAt) : null;
+      const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
+      return `
+        <div class="board-item">
+          <div class="avatar" style="background:${nameColor(item.name || "?")}">${escapeHtml(initial)}</div>
+          <div class="board-body">
+            <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
+            <div class="board-time">${timeStr} · ${escapeHtml(item.ref || "")}</div>
+            <audio class="board-audio" controls src="${item.audio}"></audio>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+  body.innerHTML = html || `<div class="empty-state">아직 등록된 암송 녹음이 없어요.</div>`;
 }
 
 async function openArchive(){
