@@ -816,11 +816,25 @@ function renderStep(){
       </div>
       <label class="field-label" style="margin-top:22px;">천천히 두세 번 소리 내어 읽어보세요. 마음에 머무는 단어나 구절이 있다면 기억해두세요.</label>
       ${state.completed ? `<button class="chip-btn" id="viewResultBtn" style="margin-top:16px;">📊 오늘 결과 · 연속 기록 보기</button>` : ''}
+      <div id="todayCompletionBanner" style="margin-top:18px;"></div>
     `;
     bar.innerHTML = `<button class="btn btn-primary" id="nextBtn">묵상으로 이동</button>`;
     document.getElementById("nextBtn").onclick = () => { currentStep = 1; renderStep(); };
     const viewResultBtn = document.getElementById("viewResultBtn");
     if(viewResultBtn) viewResultBtn.onclick = () => { currentStep = 4; renderStep(); };
+
+    (async () => {
+      const items = await loadTodayRecitations();
+      const banner = document.getElementById("todayCompletionBanner");
+      if(!banner) return;
+      if(items.length === 0){
+        banner.innerHTML = `<div class="privacy-note">오늘은 아직 아무도 암송을 마치지 않았어요. 첫 번째가 되어보세요 🌅</div>`;
+      } else {
+        const names = items.slice(0,3).map(it => escapeHtml(it.name || "익명")).join(", ");
+        const more = items.length > 3 ? ` 외 ${items.length - 3}명` : "";
+        banner.innerHTML = `<div class="privacy-note">🎉 오늘 ${items.length}명이 암송을 마쳤어요 — ${names}${more}</div>`;
+      }
+    })();
   }
 
   else if(currentStep === 1){
