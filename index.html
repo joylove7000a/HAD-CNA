@@ -1602,6 +1602,22 @@ function escapeHtml(s){
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
+function currentDateKey(){
+  return dateKey(new Date());
+}
+function reloadIfNewDay(){
+  if(currentDateKey() !== today){
+    location.reload();
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') reloadIfNewDay();
+});
+window.addEventListener('pageshow', (e) => {
+  if(e.persisted) reloadIfNewDay();
+});
+window.addEventListener('focus', reloadIfNewDay);
+
 (async function init(){
   await loadState();
   render();
