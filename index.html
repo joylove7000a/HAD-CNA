@@ -320,6 +320,30 @@
   .board-time{font-size:11px; color:var(--ink-soft); margin-bottom:4px;}
   .board-audio{width:100%; height:32px; margin-top:2px;}
 
+  /* ---------- 주님과 동행하는 오늘 (사진 나눔) ---------- */
+  .walk-upload-card{
+    background:#fff; border:1px solid #EFE7D6; border-radius:var(--radius); padding:20px; margin-bottom:20px;
+  }
+  .photo-preview{
+    width:100%; aspect-ratio:4/3; border-radius:14px; background:var(--paper-dim);
+    display:flex; align-items:center; justify-content:center; overflow:hidden; margin-bottom:12px;
+    border:1.5px dashed #E5D9BF;
+  }
+  .photo-preview img{width:100%; height:100%; object-fit:cover;}
+  .photo-preview-empty{font-size:13px; color:var(--ink-soft); text-align:center; padding:0 16px;}
+  .photo-pick-btn{
+    display:block; width:100%; text-align:center; border:1px solid #E5D9BF; background:#fff;
+    border-radius:12px; padding:12px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer; margin-bottom:12px;
+  }
+  .walk-caption-input{
+    width:100%; border:1px solid #EFE7D6; border-radius:12px; padding:12px 14px; font-size:14px;
+    font-family:'Noto Sans KR', sans-serif; min-height:60px; margin-bottom:12px;
+  }
+  .walk-board-item{background:#fff; border:1px solid #EFE7D6; border-radius:14px; overflow:hidden; margin-bottom:14px;}
+  .walk-board-photo{width:100%; aspect-ratio:4/3; object-fit:cover; display:block;}
+  .walk-board-info{padding:12px 14px;}
+  .walk-board-caption{font-size:13.5px; color:var(--ink); line-height:1.5; margin-top:4px;}
+
   /* ---------- Weekly badge board ---------- */
   .week-banner{
     background:linear-gradient(135deg, var(--sunrise), var(--blush)); color:#fff; border-radius:16px;
@@ -638,6 +662,58 @@ async function loadTodaySharedJournals(){
   }catch(e){ return []; }
 }
 
+function resizeImageFile(file, maxDim, quality){
+  maxDim = maxDim || 900;
+  quality = quality || 0.72;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if(w > maxDim || h > maxDim){
+          if(w >= h){ h = Math.round(h * maxDim / w); w = maxDim; }
+          else { w = Math.round(w * maxDim / h); h = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function loadWalkPhotosForDate(dateStr){
+  try{
+    const list = await window.storage.list(`walk:${dateStr}:`, true);
+    if(!list || !list.keys) return [];
+    const items = [];
+    for(const k of list.keys){
+      try{
+        const r = await window.storage.get(k, true);
+        if(r && r.value) items.push(JSON.parse(r.value));
+      }catch(e){}
+    }
+    items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
+    return items;
+  }catch(e){ return []; }
+}
+async function loadAllWalkDates(){
+  try{
+    const list = await window.storage.list("walk:", true);
+    if(!list || !list.keys) return [];
+    const dates = list.keys.map(k => k.replace(/^walk:/, "")).filter(Boolean);
+    dates.sort((a,b)=> a < b ? 1 : -1);
+    return dates;
+  }catch(e){ return []; }
+}
+
 async function pingWeeklyCompletion(recited){
   const profile = await loadProfile();
   if(!profile || !profile.name) return;
@@ -741,6 +817,7 @@ function render(){
           <div class="greeting">오늘도<br>주님과 함께 걸어요</div>
         </div>
         <div style="display:flex; gap:8px;">
+          <button class="icon-btn" id="walkBtn" aria-label="주님과 동행하는 오늘">📷</button>
           <button class="icon-btn" id="allRecBtn" aria-label="모두의 암송 보관함">🎧</button>
           <button class="icon-btn" id="weekBtn" aria-label="이번 주 도전 보기">🏆</button>
           <button class="icon-btn" id="archiveBtn" aria-label="지난 기록 보기">☰</button>
@@ -779,6 +856,14 @@ function render(){
       </div>
       <div class="overlay-body" id="allRecBody"></div>
     </div>
+
+    <div class="overlay" id="walkOverlay">
+      <div class="overlay-head">
+        <button class="icon-btn" id="closeWalk" style="background:#EFE7D6; color:#2B2420;" aria-label="닫기">✕</button>
+        <h2>주님과 동행하는 오늘</h2>
+      </div>
+      <div class="overlay-body" id="walkBody"></div>
+    </div>
   `;
 
   renderStep();
@@ -793,6 +878,10 @@ function render(){
   document.getElementById("allRecBtn").onclick = openAllRecitations;
   document.getElementById("closeAllRec").onclick = () => {
     document.getElementById("allRecOverlay").classList.remove("active");
+  };
+  document.getElementById("walkBtn").onclick = openWalk;
+  document.getElementById("closeWalk").onclick = () => {
+    document.getElementById("walkOverlay").classList.remove("active");
   };
 }
 
@@ -1533,6 +1622,122 @@ async function openWeekly(){
       점수 안내 · 묵상 완료 +10점 · 암송 녹음 제출 +5점 · 연속 3일마다 +5점 보너스 · 주간 개근(7/7) +30점 보너스
     </div>
   `;
+}
+
+let pendingWalkPhoto = null;
+
+async function openWalk(){
+  const overlay = document.getElementById("walkOverlay");
+  const body = document.getElementById("walkBody");
+  overlay.classList.add("active");
+  body.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
+  pendingWalkPhoto = null;
+
+  const profile = await loadProfile();
+
+  if(!profile || !profile.name){
+    body.innerHTML = `
+      <div class="name-gate">
+        <h2 class="block-title" style="margin-bottom:4px;">먼저 이름을 알려주세요</h2>
+        <div class="hint" id="walkNameHint">사진을 올릴 때 이름으로 표시돼요. 실명이 아니어도 괜찮아요.</div>
+        <input type="text" id="walkNameInput" placeholder="예: 은혜, 김OO" maxlength="20">
+        <button class="btn-small" id="walkSaveNameBtn">저장하고 계속하기</button>
+      </div>
+    `;
+    document.getElementById("walkSaveNameBtn").onclick = async () => {
+      const v = document.getElementById("walkNameInput").value.trim();
+      if(!v) return;
+      const btn = document.getElementById("walkSaveNameBtn");
+      const hint = document.getElementById("walkNameHint");
+      btn.disabled = true; btn.textContent = "저장 중…";
+      await saveProfile({name: v});
+      const check = await loadProfile();
+      if(check && check.name === v){
+        openWalk();
+      } else {
+        btn.disabled = false; btn.textContent = "다시 저장하기";
+        hint.innerHTML = `사진을 올릴 때 이름으로 표시돼요.<br><span style="color:#C0392B; font-weight:700;">저장에 실패했어요. 게시(Publish) 후 다시 시도해주세요.</span>`;
+      }
+    };
+    return;
+  }
+
+  body.innerHTML = `
+    <div class="walk-upload-card">
+      <h2 class="block-title" style="margin-bottom:4px;">오늘, 주님과 함께한 순간</h2>
+      <div class="confirm-hint" style="margin-bottom:14px;">일상 속에서 은혜받은 장면을 사진으로 나눠보세요. 이름과 함께 공개돼요.</div>
+      <div class="photo-preview" id="walkPreview">
+        <div class="photo-preview-empty">사진을 선택하면 여기에 미리보기가 떠요</div>
+      </div>
+      <label class="photo-pick-btn" for="walkPhotoInput">📷 사진 선택 / 촬영</label>
+      <input type="file" id="walkPhotoInput" accept="image/*" capture="environment" style="display:none;">
+      <textarea class="walk-caption-input" id="walkCaptionInput" placeholder="사진에 짧은 이야기를 남겨보세요 (선택)"></textarea>
+      <button class="btn-small" id="walkSubmitBtn" style="width:100%; text-align:center;" disabled>사진을 먼저 선택해주세요</button>
+    </div>
+    <h2 class="block-title">오늘 함께 나눈 순간들</h2>
+    <div id="walkBoardList"><div class="loading" style="height:auto; padding:30px 0;">불러오는 중…</div></div>
+  `;
+
+  document.getElementById("walkPhotoInput").onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    const preview = document.getElementById("walkPreview");
+    preview.innerHTML = `<div class="photo-preview-empty">이미지 처리 중…</div>`;
+    try{
+      const dataUrl = await resizeImageFile(file, 900, 0.72);
+      pendingWalkPhoto = dataUrl;
+      preview.innerHTML = `<img src="${dataUrl}" alt="선택한 사진">`;
+      const submitBtn = document.getElementById("walkSubmitBtn");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "나누기";
+    }catch(err){
+      preview.innerHTML = `<div class="photo-preview-empty">이미지를 불러오지 못했어요. 다시 시도해주세요.</div>`;
+    }
+  };
+
+  document.getElementById("walkSubmitBtn").onclick = async () => {
+    if(!pendingWalkPhoto) return;
+    const btn = document.getElementById("walkSubmitBtn");
+    btn.disabled = true; btn.textContent = "올리는 중…";
+    const caption = document.getElementById("walkCaptionInput").value.trim();
+    const key = `walk:${today}:${slugifyName(profile.name)}_${Date.now()}`;
+    const payload = { name: profile.name, photo: pendingWalkPhoto, caption, submittedAt: new Date().toISOString() };
+    try{
+      await window.storage.set(key, JSON.stringify(payload), true);
+      btn.textContent = "✓ 나눴어요";
+      renderWalkBoard(profile.name);
+    }catch(e){
+      console.error("walk photo save failed", e);
+      btn.disabled = false; btn.textContent = "다시 시도";
+    }
+  };
+
+  renderWalkBoard(profile.name);
+}
+
+async function renderWalkBoard(myName){
+  const listEl = document.getElementById("walkBoardList");
+  if(!listEl) return;
+  const items = await loadWalkPhotosForDate(today);
+  if(items.length === 0){
+    listEl.innerHTML = `<div class="empty-state">아직 오늘 나눈 사진이 없어요.<br>첫 순간을 나눠보세요.</div>`;
+    return;
+  }
+  listEl.innerHTML = items.map(item=>{
+    const isMe = item.name === myName;
+    const t = item.submittedAt ? new Date(item.submittedAt) : null;
+    const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
+    return `
+      <div class="walk-board-item">
+        <img class="walk-board-photo" src="${item.photo}" alt="${escapeHtml(item.name||"")}님이 나눈 사진">
+        <div class="walk-board-info">
+          <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
+          <div class="board-time">${timeStr}</div>
+          ${item.caption ? `<div class="walk-board-caption">${escapeHtml(item.caption)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function openAllRecitations(){
