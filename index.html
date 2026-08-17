@@ -548,8 +548,8 @@ const verse = verseForDate(now);
 const reflectQs = (REFLECTIONS[verse.theme] || []).slice(0,2);
 
 let state = { read:false, journal:"", prayer:"", completed:false };
-let currentStep = 0; // 0 verse, 1 reflect, 2 journal, 3 recite, 4 done
-const STEP_NAMES = ["말씀","묵상","기록","암송","완료"];
+let currentStep = 0; // 0 verse, 1 reflect, 2 journal, 3 recite, 4 photo share, 5 done
+const STEP_NAMES = ["말씀","묵상","기록","암송","나눔","완료"];
 
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -805,7 +805,7 @@ function computeStreakFrom(items){
 
 function render(){
   const app = document.getElementById("app");
-  const progressPct = state.completed ? 100 : (currentStep/4)*100;
+  const progressPct = state.completed ? 100 : (currentStep/5)*100;
 
   app.innerHTML = `
     <div class="sky" id="sky">
@@ -824,7 +824,7 @@ function render(){
         </div>
       </div>
       <div class="arc-wrap">
-        <div class="arc-labels"><span>말씀</span><span>묵상</span><span>기록</span><span>암송</span><span>완료</span></div>
+        <div class="arc-labels"><span>말씀</span><span>묵상</span><span>기록</span><span>암송</span><span>나눔</span><span>완료</span></div>
         <div class="arc-track"><div class="arc-fill" id="arcFill" style="width:${progressPct}%"></div></div>
       </div>
     </div>
@@ -910,7 +910,7 @@ function renderStep(){
     bar.innerHTML = `<button class="btn btn-primary" id="nextBtn">묵상으로 이동</button>`;
     document.getElementById("nextBtn").onclick = () => { currentStep = 1; renderStep(); };
     const viewResultBtn = document.getElementById("viewResultBtn");
-    if(viewResultBtn) viewResultBtn.onclick = () => { currentStep = 4; renderStep(); };
+    if(viewResultBtn) viewResultBtn.onclick = () => { currentStep = 5; renderStep(); };
 
     (async () => {
       const items = await loadTodayRecitations();
@@ -1034,6 +1034,10 @@ function renderStep(){
   }
 
   else if(currentStep === 4){
+    renderPhotoStep();
+  }
+
+  else if(currentStep === 5){
     content.innerHTML = `<div id="doneWrap"><div class="center-text"><div class="loading" style="height:auto; padding:20px 0;">기록을 확인하는 중…</div></div></div>`;
     bar.innerHTML = `<button class="btn btn-primary" id="homeBtn">홈으로</button>`;
     document.getElementById("homeBtn").onclick = () => { currentStep = 0; renderStep(); };
@@ -1273,6 +1277,90 @@ async function renderReciteStep(){
 
   loadAndRenderBoard(profile.name);
   loadAndRenderJournalBoard(profile.name);
+}
+
+async function renderPhotoStep(){
+  const content = document.getElementById("content");
+  const bar = document.getElementById("bottomBar");
+  pendingWalkPhoto = null;
+
+  bar.innerHTML = `<button class="btn btn-ghost" id="skipPhotoBtn" style="flex:1;">건너뛰고 완료하기</button>`;
+  document.getElementById("skipPhotoBtn").onclick = () => { currentStep = 5; renderStep(); };
+
+  content.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
+  const profile = await loadProfile();
+
+  content.innerHTML = `
+    <div class="eyebrow">주님과 동행하는 오늘</div>
+    <div class="walk-upload-card">
+      <h2 class="block-title" style="margin-bottom:4px;">오늘, 주님과 함께한 순간</h2>
+      <div class="confirm-hint" style="margin-bottom:14px;">일상 속 은혜받은 장면을 사진으로 나눠보세요. 원치 않으면 건너뛰어도 괜찮아요.</div>
+      <div class="photo-preview" id="stepPhotoPreview">
+        <div class="photo-preview-empty">사진을 선택하면 여기에 미리보기가 떠요</div>
+      </div>
+      <label class="photo-pick-btn" for="stepPhotoInput">📷 사진 선택 / 촬영</label>
+      <input type="file" id="stepPhotoInput" accept="image/*" capture="environment" style="display:none;">
+      <textarea class="walk-caption-input" id="stepCaptionInput" placeholder="사진에 짧은 이야기를 남겨보세요 (선택)"></textarea>
+    </div>
+    <div id="stepPhotoBoardWrap">
+      <h2 class="block-title">오늘 함께 나눈 순간들</h2>
+      <div id="stepPhotoBoardList"><div class="loading" style="height:auto; padding:30px 0;">불러오는 중…</div></div>
+    </div>
+  `;
+
+  document.getElementById("stepPhotoInput").onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    const preview = document.getElementById("stepPhotoPreview");
+    preview.innerHTML = `<div class="photo-preview-empty">이미지 처리 중…</div>`;
+    try{
+      const dataUrl = await resizeImageFile(file, 900, 0.72);
+      pendingWalkPhoto = dataUrl;
+      preview.innerHTML = `<img src="${dataUrl}" alt="선택한 사진">`;
+      bar.innerHTML = `
+        <button class="btn btn-ghost" id="skipPhotoBtn">건너뛰기</button>
+        <button class="btn btn-primary" id="sharePhotoBtn">나누고 완료하기</button>
+      `;
+      document.getElementById("skipPhotoBtn").onclick = () => { currentStep = 5; renderStep(); };
+      document.getElementById("sharePhotoBtn").onclick = async () => {
+        const btn = document.getElementById("sharePhotoBtn");
+        btn.disabled = true; btn.textContent = "올리는 중…";
+        const caption = document.getElementById("stepCaptionInput").value.trim();
+        const key = `walk:${today}:${slugifyName(profile.name)}_${Date.now()}`;
+        const payload = { name: profile.name, photo: pendingWalkPhoto, caption, submittedAt: new Date().toISOString() };
+        try{
+          await window.storage.set(key, JSON.stringify(payload), true);
+        }catch(err){ console.error("photo step save failed", err); }
+        currentStep = 5;
+        renderStep();
+      };
+    }catch(err){
+      preview.innerHTML = `<div class="photo-preview-empty">이미지를 불러오지 못했어요. 다시 시도해주세요.</div>`;
+    }
+  };
+
+  const listEl = document.getElementById("stepPhotoBoardList");
+  const items = await loadWalkPhotosForDate(today);
+  if(!listEl) return;
+  if(items.length === 0){
+    listEl.innerHTML = `<div class="empty-state">아직 오늘 나눈 사진이 없어요.<br>첫 순간을 나눠보세요.</div>`;
+    return;
+  }
+  listEl.innerHTML = items.map(item=>{
+    const isMe = profile && item.name === profile.name;
+    const t = item.submittedAt ? new Date(item.submittedAt) : null;
+    const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
+    return `
+      <div class="walk-board-item">
+        <img class="walk-board-photo" src="${item.photo}" alt="${escapeHtml(item.name||"")}님이 나눈 사진">
+        <div class="walk-board-info">
+          <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
+          <div class="board-time">${timeStr}</div>
+          ${item.caption ? `<div class="walk-board-caption">${escapeHtml(item.caption)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function startRecording(){
