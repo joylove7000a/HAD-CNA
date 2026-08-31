@@ -1503,10 +1503,19 @@ async function awardPointsToState(amount, reason){
 }
 
 async function awardDailyPoints(recited, durationSeconds){
-  if(state.pointsAwarded) return; // 오늘 이미 채점됨, 중복 방지
-  state.pointsAwarded = true;
+  if(state.pointsAwarded) return; // 이미 성공적으로 채점됨
 
-  await awardPointsToState(10, "일일 묵상 완료");
+  const baseOk = await awardPointsToState(10, "일일 묵상 완료");
+  if(!baseOk){
+    // 이름(프로필)이 확인되지 않아 점수 저장 실패 — 나중에 완료 화면에서 자동 재시도
+    state.pointsAwardFailed = true;
+    state.pendingRecited = recited;
+    state.pendingDuration = durationSeconds;
+    await saveState();
+    return;
+  }
+  state.pointsAwarded = true;
+  state.pointsAwardFailed = false;
 
   if(recited){
     const bonus = speedBonusFor(verse, durationSeconds);
@@ -1527,6 +1536,7 @@ async function awardDailyPoints(recited, durationSeconds){
   if(weeklyBonus){
     await awardPointsToState(weeklyBonus, "이번 주 개근 보너스");
   }
+  await saveState();
 }
 
 async function loadAndRenderJournalBoard(myName){
@@ -1586,6 +1596,10 @@ async function loadAndRenderBoard(myName){
 }
 
 async function renderDone(){
+  if(state.completed && state.pointsAwardFailed && !state.pointsAwarded){
+    await awardDailyPoints(state.pendingRecited, state.pendingDuration);
+  }
+
   const items = await getArchive();
   const streak = computeStreakFrom(items);
   const last7 = [];
@@ -1606,7 +1620,9 @@ async function renderDone(){
         <div class="rec-status" style="margin-bottom:0;">누적 ${state.totalScoreAfter ?? "?"}점</div>
       </div>
     `
-    : "";
+    : (state.pointsAwardFailed
+        ? `<div class="privacy-note" style="margin-bottom:18px; color:#C0392B;">⚠️ 이름이 확인되지 않아 오늘 점수가 아직 저장되지 않았어요. 암송 화면에서 이름을 다시 확인해주세요.</div>`
+        : "");
   wrap.innerHTML = `
     <div class="streak-box">
       <div class="done-check">✓</div>
