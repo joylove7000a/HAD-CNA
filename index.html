@@ -624,6 +624,23 @@ async function addPoints(amount, reason){
   return data.total;
 }
 
+async function adminAdjustScore(targetName, amount, reason){
+  const slug = slugifyName(targetName);
+  const key = `score:${slug}`;
+  let data = {name: targetName, total: 0, history: []};
+  try{
+    const r = await window.storage.get(key, true);
+    if(r && r.value) data = JSON.parse(r.value);
+  }catch(e){}
+  data.name = targetName;
+  data.total = (data.total || 0) + amount;
+  data.history = data.history || [];
+  data.history.push({amount, reason: reason || "관리자 보정", at: new Date().toISOString()});
+  if(data.history.length > 60) data.history = data.history.slice(-60);
+  await window.storage.set(key, JSON.stringify(data), true);
+  return data.total;
+}
+
 async function loadScoreboard(){
   try{
     const list = await window.storage.list("score:", true);
@@ -2321,7 +2338,44 @@ async function openArchive(){
         `;
       }).join("");
 
-  body.innerHTML = profileHtml + `<h2 class="block-title">지난 묵상 기록</h2>` + archiveHtml;
+  const adminHtml = (profile && profile.name === ADMIN_NAME) ? `
+    <div class="name-gate" style="margin-bottom:22px; border:1px solid var(--sunrise);">
+      <h2 class="block-title" style="margin-bottom:4px;">🛠️ 관리자 점수 보정</h2>
+      <div class="hint">이름을 입력하고, 더할 점수(마이너스도 가능)와 사유를 적으면 바로 반영돼요. Firebase를 직접 만질 필요 없어요.</div>
+      <input type="text" id="adjNameInput" placeholder="대상 이름 (예: 김예은)" maxlength="20">
+      <input type="number" id="adjAmountInput" placeholder="더할 점수 (예: 25, 마이너스는 -10)" style="margin-top:8px;">
+      <input type="text" id="adjReasonInput" placeholder="사유 (예: 8/31 오전 누락분 보정)" style="margin-top:8px;">
+      <button class="btn-small" id="adjSubmitBtn">점수 반영하기</button>
+      <div id="adjResultMsg" style="margin-top:8px; font-size:13px;"></div>
+    </div>
+  ` : "";
+
+  body.innerHTML = profileHtml + adminHtml + `<h2 class="block-title">지난 묵상 기록</h2>` + archiveHtml;
+
+  if(profile && profile.name === ADMIN_NAME){
+    document.getElementById("adjSubmitBtn").onclick = async () => {
+      const name = document.getElementById("adjNameInput").value.trim();
+      const amount = parseInt(document.getElementById("adjAmountInput").value, 10);
+      const reason = document.getElementById("adjReasonInput").value.trim() || "관리자 보정";
+      const msg = document.getElementById("adjResultMsg");
+      if(!name || isNaN(amount)){
+        msg.innerHTML = `<span style="color:#C0392B;">이름과 숫자 점수를 정확히 입력해주세요.</span>`;
+        return;
+      }
+      const btn = document.getElementById("adjSubmitBtn");
+      btn.disabled = true; btn.textContent = "반영 중…";
+      try{
+        const newTotal = await adminAdjustScore(name, amount, reason);
+        msg.innerHTML = `<span style="color:var(--ok); font-weight:700;">✓ ${escapeHtml(name)}님 ${amount>0?'+':''}${amount}점 반영 완료 (누적 ${newTotal}점)</span>`;
+        document.getElementById("adjNameInput").value = "";
+        document.getElementById("adjAmountInput").value = "";
+        document.getElementById("adjReasonInput").value = "";
+      }catch(e){
+        msg.innerHTML = `<span style="color:#C0392B;">반영 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
+      }
+      btn.disabled = false; btn.textContent = "점수 반영하기";
+    };
+  }
 
   document.getElementById("profileSaveBtn").onclick = async () => {
     const v = document.getElementById("profileNameInput").value.trim();
