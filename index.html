@@ -846,7 +846,7 @@ function render(){
     <div class="overlay" id="overlay">
       <div class="overlay-head">
         <button class="icon-btn" id="closeArchive" style="background:#EFE7D6; color:#2B2420;" aria-label="닫기">✕</button>
-        <h2>지난 묵상 기록</h2>
+        <h2>내 정보 · 지난 기록</h2>
       </div>
       <div class="overlay-body" id="archiveBody"></div>
     </div>
@@ -1933,27 +1933,105 @@ async function openAllRecitations(){
   body.innerHTML = html || `<div class="empty-state">아직 등록된 암송 녹음이 없어요.</div>`;
 }
 
+async function renameProfile(newName){
+  const profile = await loadProfile();
+  const oldName = profile ? profile.name : null;
+  if(!oldName){
+    await saveProfile({name: newName});
+    return;
+  }
+  if(oldName === newName) return;
+
+  const oldSlug = slugifyName(oldName);
+  const newSlug = slugifyName(newName);
+
+  if(oldSlug !== newSlug){
+    // 누적 점수 이전
+    try{
+      const oldScoreKey = `score:${oldSlug}`;
+      const newScoreKey = `score:${newSlug}`;
+      const oldR = await window.storage.get(oldScoreKey, true);
+      if(oldR && oldR.value){
+        const oldData = JSON.parse(oldR.value);
+        let newData = {name: newName, total: 0, history: []};
+        try{
+          const newR = await window.storage.get(newScoreKey, true);
+          if(newR && newR.value) newData = JSON.parse(newR.value);
+        }catch(e){}
+        newData.name = newName;
+        newData.total = (newData.total || 0) + (oldData.total || 0);
+        newData.history = [...(newData.history || []), ...(oldData.history || [])].slice(-60);
+        await window.storage.set(newScoreKey, JSON.stringify(newData), true);
+        await window.storage.delete(oldScoreKey, true);
+      }
+    }catch(e){ console.error("score migrate failed", e); }
+
+    // 이번 주 진행 상황 이전
+    try{
+      const wKey = dateKey(weekStartDate(now));
+      const oldWeekKey = `weekcomplete:${wKey}:${oldSlug}`;
+      const newWeekKey = `weekcomplete:${wKey}:${newSlug}`;
+      const oldR = await window.storage.get(oldWeekKey, true);
+      if(oldR && oldR.value){
+        const oldData = JSON.parse(oldR.value);
+        oldData.name = newName;
+        await window.storage.set(newWeekKey, JSON.stringify(oldData), true);
+        await window.storage.delete(oldWeekKey, true);
+      }
+    }catch(e){ console.error("week migrate failed", e); }
+  }
+
+  await saveProfile({name: newName});
+}
+
 async function openArchive(){
   const overlay = document.getElementById("overlay");
   const body = document.getElementById("archiveBody");
   overlay.classList.add("active");
   body.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
+
+  const profile = await loadProfile();
   const items = await getArchive();
-  if(items.length === 0){
-    body.innerHTML = `<div class="empty-state">아직 기록이 없어요.<br>오늘의 묵상을 마치면<br>이곳에 쌓이기 시작해요.</div>`;
-    return;
-  }
-  body.innerHTML = items.map(it => {
-    const d = new Date(it.date + "T00:00:00");
-    const v = verseForDate(d);
-    return `
-      <div class="archive-item">
-        <div class="archive-date">${it.date} (${weekdayKo(d)}) ${it.completed ? "· 완료" : ""} ${it.reciteSubmitted ? "· 🎙️ 암송" : ""}</div>
-        <div class="archive-verse">"${v.text}" — ${v.ref}</div>
-        ${it.journal ? `<div class="archive-journal">${escapeHtml(it.journal)}</div>` : ""}
-      </div>
-    `;
-  }).join("");
+
+  const profileHtml = `
+    <div class="name-gate" style="margin-bottom:22px;">
+      <h2 class="block-title" style="margin-bottom:4px;">내 정보</h2>
+      <div class="hint" id="profileHint">현재 닉네임: <b>${profile && profile.name ? escapeHtml(profile.name) : "설정 안 됨"}</b></div>
+      <input type="text" id="profileNameInput" placeholder="새 닉네임" maxlength="20" value="${profile && profile.name ? escapeHtml(profile.name) : ""}">
+      <button class="btn-small" id="profileSaveBtn">닉네임 저장</button>
+    </div>
+  `;
+
+  const archiveHtml = items.length === 0
+    ? `<div class="empty-state">아직 기록이 없어요.<br>오늘의 묵상을 마치면<br>이곳에 쌓이기 시작해요.</div>`
+    : items.map(it => {
+        const d = new Date(it.date + "T00:00:00");
+        const v = verseForDate(d);
+        return `
+          <div class="archive-item">
+            <div class="archive-date">${it.date} (${weekdayKo(d)}) ${it.completed ? "· 완료" : ""} ${it.reciteSubmitted ? "· 🎙️ 암송" : ""}</div>
+            <div class="archive-verse">"${v.text}" — ${v.ref}</div>
+            ${it.journal ? `<div class="archive-journal">${escapeHtml(it.journal)}</div>` : ""}
+          </div>
+        `;
+      }).join("");
+
+  body.innerHTML = profileHtml + `<h2 class="block-title">지난 묵상 기록</h2>` + archiveHtml;
+
+  document.getElementById("profileSaveBtn").onclick = async () => {
+    const v = document.getElementById("profileNameInput").value.trim();
+    if(!v) return;
+    const btn = document.getElementById("profileSaveBtn");
+    const hint = document.getElementById("profileHint");
+    btn.disabled = true; btn.textContent = "저장 중…";
+    try{
+      await renameProfile(v);
+      hint.innerHTML = `현재 닉네임: <b>${escapeHtml(v)}</b><br><span style="color:var(--ok); font-weight:700;">✓ 저장됐어요. 누적 점수와 이번 주 기록도 새 이름으로 이어졌어요.</span>`;
+    }catch(e){
+      hint.innerHTML = `현재 닉네임: <b>${profile && profile.name ? escapeHtml(profile.name) : "설정 안 됨"}</b><br><span style="color:#C0392B; font-weight:700;">저장에 실패했어요. 다시 시도해주세요.</span>`;
+    }
+    btn.disabled = false; btn.textContent = "닉네임 저장";
+  };
 }
 
 function escapeHtml(s){
