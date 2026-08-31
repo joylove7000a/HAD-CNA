@@ -1916,6 +1916,28 @@ async function postNotice(content){
   }catch(e){ console.error("notice post failed", e); return false; }
 }
 
+async function editNotice(postId, newContent){
+  try{
+    const key = `notice:${postId}`;
+    const r = await window.storage.get(key, true);
+    if(!r || !r.value) return false;
+    const data = safeParse(r.value);
+    data.content = newContent;
+    data.editedAt = new Date().toISOString();
+    await window.storage.set(key, JSON.stringify(data), true);
+    return true;
+  }catch(e){ console.error("notice edit failed", e); return false; }
+}
+
+async function deleteNotice(postId){
+  try{
+    await window.storage.delete(`notice:${postId}`, true);
+    await window.storage.delete(`noticeConfirm:${postId}:`, true);
+    await window.storage.delete(`noticeComment:${postId}:`, true);
+    return true;
+  }catch(e){ console.error("notice delete failed", e); return false; }
+}
+
 async function toggleNoticeConfirm(postId){
   const profile = await loadProfile();
   if(!profile || !profile.name) return null;
@@ -2128,6 +2150,7 @@ async function openNotice(){
 async function renderNoticeList(myName){
   const wrap = document.getElementById("noticeListWrap");
   if(!wrap) return;
+  const isAdmin = myName === ADMIN_NAME;
   const notices = await loadNotices();
   if(notices.length === 0){
     wrap.innerHTML = `<div class="empty-state">아직 게시글이 없어요.<br>첫 글을 남겨보세요.</div>`;
@@ -2140,13 +2163,19 @@ async function renderNoticeList(myName){
         <div class="avatar" style="width:30px; height:30px; font-size:12px; background:${nameColor(n.name||"?")}">${escapeHtml((n.name||"?").trim()[0]||"?")}</div>
         <div>
           <div class="board-name" style="margin-bottom:0;">${escapeHtml(n.name||"익명")}</div>
-          <div class="notice-time">${formatNoticeTime(n.createdAt)}</div>
+          <div class="notice-time">${formatNoticeTime(n.createdAt)}${n.editedAt ? ' · 수정됨' : ''}</div>
         </div>
       </div>
-      <div class="notice-content">${escapeHtml(n.content||"")}</div>
+      <div id="contentWrap-${n.id}">
+        <div class="notice-content" id="contentView-${n.id}">${escapeHtml(n.content||"")}</div>
+      </div>
       <div class="notice-actions">
         <button class="notice-action-btn" id="confirmBtn-${n.id}">✅ 확인 …</button>
         <button class="notice-action-btn" id="commentToggle-${n.id}">💬 댓글 …</button>
+        ${isAdmin ? `
+          <button class="notice-action-btn" id="editBtn-${n.id}">✏️ 수정</button>
+          <button class="notice-action-btn" id="deleteBtn-${n.id}">🗑️ 삭제</button>
+        ` : ''}
       </div>
       <div class="notice-comments" id="comments-${n.id}" style="display:none;">
         <div id="commentList-${n.id}"><div class="loading" style="height:auto; padding:12px 0;">불러오는 중…</div></div>
@@ -2189,6 +2218,40 @@ async function renderNoticeList(myName){
     };
 
     refreshNoticeCommentCount(n.id);
+
+    if(isAdmin){
+      const editBtn = document.getElementById(`editBtn-${n.id}`);
+      const deleteBtn = document.getElementById(`deleteBtn-${n.id}`);
+
+      editBtn.onclick = () => {
+        const contentWrap = document.getElementById(`contentWrap-${n.id}`);
+        contentWrap.innerHTML = `
+          <textarea class="notice-write-input" id="editInput-${n.id}">${escapeHtml(n.content||"")}</textarea>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="btn-small" id="editCancelBtn-${n.id}" style="background:#EFE7D6; color:var(--ink);">취소</button>
+            <button class="btn-small" id="editSaveBtn-${n.id}">저장</button>
+          </div>
+        `;
+        document.getElementById(`editCancelBtn-${n.id}`).onclick = () => renderNoticeList(myName);
+        document.getElementById(`editSaveBtn-${n.id}`).onclick = async () => {
+          const newText = document.getElementById(`editInput-${n.id}`).value.trim();
+          if(!newText) return;
+          const saveBtn = document.getElementById(`editSaveBtn-${n.id}`);
+          saveBtn.disabled = true; saveBtn.textContent = "저장 중…";
+          const ok = await editNotice(n.id, newText);
+          if(ok) renderNoticeList(myName);
+          else { saveBtn.disabled = false; saveBtn.textContent = "저장"; }
+        };
+      };
+
+      deleteBtn.onclick = async () => {
+        if(!confirm("이 공지를 삭제할까요? 댓글과 확인 기록도 함께 삭제돼요.")) return;
+        deleteBtn.disabled = true; deleteBtn.textContent = "삭제 중…";
+        const ok = await deleteNotice(n.id);
+        if(ok) renderNoticeList(myName);
+        else { deleteBtn.disabled = false; deleteBtn.textContent = "🗑️ 삭제"; }
+      };
+    }
   }
 }
 
