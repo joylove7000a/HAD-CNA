@@ -344,6 +344,35 @@
   .walk-board-info{padding:12px 14px;}
   .walk-board-caption{font-size:13.5px; color:var(--ink); line-height:1.5; margin-top:4px;}
 
+  /* ---------- 게시판 ---------- */
+  .notice-write-card{background:#fff; border:1px solid #EFE7D6; border-radius:var(--radius); padding:18px; margin-bottom:20px;}
+  .notice-write-input{
+    width:100%; border:1px solid #EFE7D6; border-radius:12px; padding:12px 14px; font-size:14px;
+    font-family:'Noto Sans KR', sans-serif; min-height:80px; margin-bottom:10px;
+  }
+  .notice-card{background:#fff; border:1px solid #EFE7D6; border-radius:16px; padding:16px; margin-bottom:14px;}
+  .notice-head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .notice-time{font-size:11px; color:var(--ink-soft);}
+  .notice-content{font-size:14.5px; color:var(--ink); line-height:1.6; white-space:pre-wrap; margin-bottom:12px;}
+  .notice-actions{display:flex; gap:8px; margin-bottom:6px;}
+  .notice-action-btn{
+    border:1px solid #E5D9BF; background:#fff; color:var(--ink); border-radius:20px; padding:7px 14px;
+    font-size:12.5px; font-weight:700; cursor:pointer;
+  }
+  .notice-action-btn.active{background:var(--ok); color:#fff; border-color:var(--ok);}
+  .notice-comments{margin-top:10px; padding-top:10px; border-top:1px solid #F3ECDD;}
+  .notice-comment-item{font-size:13px; color:var(--ink); line-height:1.5; margin-bottom:8px;}
+  .notice-comment-item b{color:var(--blush); font-weight:700; margin-right:4px;}
+  .notice-comment-input-row{display:flex; gap:6px; margin-top:8px;}
+  .notice-comment-input{
+    flex:1; border:1px solid #EFE7D6; border-radius:20px; padding:8px 14px; font-size:13px;
+    font-family:'Noto Sans KR', sans-serif;
+  }
+  .notice-comment-send{
+    border:none; background:var(--ink); color:#fff; border-radius:20px; padding:8px 16px;
+    font-size:12.5px; font-weight:700; cursor:pointer;
+  }
+
   /* ---------- Weekly badge board ---------- */
   .week-banner{
     background:linear-gradient(135deg, var(--sunrise), var(--blush)); color:#fff; border-radius:16px;
@@ -826,7 +855,8 @@ function render(){
           <div class="date-label">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 (${weekdayKo(now)})</div>
           <div class="greeting">오늘도<br>주님과 함께 걸어요</div>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; max-width:180px;">
+          <button class="icon-btn" id="noticeBtn" aria-label="게시판">📢</button>
           <button class="icon-btn" id="walkBtn" aria-label="주님과 동행하는 오늘">📷</button>
           <button class="icon-btn" id="allRecBtn" aria-label="모두의 암송 보관함">🎧</button>
           <button class="icon-btn" id="weekBtn" aria-label="이번 주 도전 보기">🏆</button>
@@ -874,6 +904,14 @@ function render(){
       </div>
       <div class="overlay-body" id="walkBody"></div>
     </div>
+
+    <div class="overlay" id="noticeOverlay">
+      <div class="overlay-head">
+        <button class="icon-btn" id="closeNotice" style="background:#EFE7D6; color:#2B2420;" aria-label="닫기">✕</button>
+        <h2>게시판</h2>
+      </div>
+      <div class="overlay-body" id="noticeBody"></div>
+    </div>
   `;
 
   renderStep();
@@ -892,6 +930,10 @@ function render(){
   document.getElementById("walkBtn").onclick = openWalk;
   document.getElementById("closeWalk").onclick = () => {
     document.getElementById("walkOverlay").classList.remove("active");
+  };
+  document.getElementById("noticeBtn").onclick = openNotice;
+  document.getElementById("closeNotice").onclick = () => {
+    document.getElementById("noticeOverlay").classList.remove("active");
   };
 }
 
@@ -1779,6 +1821,101 @@ async function openWeekly(){
 
 let pendingWalkPhoto = null;
 
+function genId(){
+  return `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+}
+
+async function loadNotices(){
+  try{
+    const list = await window.storage.list("notice:", true);
+    if(!list || !list.keys) return [];
+    const items = [];
+    for(const k of list.keys){
+      try{
+        const r = await window.storage.get(k, true);
+        if(r && r.value){
+          const data = JSON.parse(r.value);
+          data.id = k.replace(/^notice:/, "");
+          items.push(data);
+        }
+      }catch(e){}
+    }
+    items.sort((a,b)=> (b.createdAt || "") < (a.createdAt || "") ? -1 : ((b.createdAt||"") > (a.createdAt||"") ? 1 : 0));
+    return items;
+  }catch(e){ return []; }
+}
+
+async function loadNoticeConfirms(postId){
+  try{
+    const list = await window.storage.list(`noticeConfirm:${postId}:`, true);
+    if(!list || !list.keys) return [];
+    const items = [];
+    for(const k of list.keys){
+      try{
+        const r = await window.storage.get(k, true);
+        if(r && r.value) items.push(JSON.parse(r.value));
+      }catch(e){}
+    }
+    return items;
+  }catch(e){ return []; }
+}
+
+async function loadNoticeComments(postId){
+  try{
+    const list = await window.storage.list(`noticeComment:${postId}:`, true);
+    if(!list || !list.keys) return [];
+    const items = [];
+    for(const k of list.keys){
+      try{
+        const r = await window.storage.get(k, true);
+        if(r && r.value) items.push(JSON.parse(r.value));
+      }catch(e){}
+    }
+    items.sort((a,b)=> (a.at || "") < (b.at || "") ? -1 : 1);
+    return items;
+  }catch(e){ return []; }
+}
+
+async function postNotice(content){
+  const profile = await loadProfile();
+  if(!profile || !profile.name) return false;
+  const id = genId();
+  const payload = { name: profile.name, content, createdAt: new Date().toISOString() };
+  try{
+    await window.storage.set(`notice:${id}`, JSON.stringify(payload), true);
+    return true;
+  }catch(e){ console.error("notice post failed", e); return false; }
+}
+
+async function toggleNoticeConfirm(postId){
+  const profile = await loadProfile();
+  if(!profile || !profile.name) return null;
+  const slug = slugifyName(profile.name);
+  const key = `noticeConfirm:${postId}:${slug}`;
+  try{
+    const r = await window.storage.get(key, true);
+    if(r && r.value){
+      await window.storage.delete(key, true);
+      return false;
+    } else {
+      await window.storage.set(key, JSON.stringify({name: profile.name, confirmedAt: new Date().toISOString()}), true);
+      return true;
+    }
+  }catch(e){ console.error("confirm toggle failed", e); return null; }
+}
+
+async function postNoticeComment(postId, comment){
+  const profile = await loadProfile();
+  if(!profile || !profile.name) return false;
+  const slug = slugifyName(profile.name);
+  const key = `noticeComment:${postId}:${slug}_${Date.now()}`;
+  const payload = { name: profile.name, comment, at: new Date().toISOString() };
+  try{
+    await window.storage.set(key, JSON.stringify(payload), true);
+    return true;
+  }catch(e){ console.error("comment post failed", e); return false; }
+}
+
 async function openWalk(){
   const overlay = document.getElementById("walkOverlay");
   const body = document.getElementById("walkBody");
@@ -1891,6 +2028,174 @@ async function renderWalkBoard(myName){
       </div>
     `;
   }).join("");
+}
+
+async function openNotice(){
+  const overlay = document.getElementById("noticeOverlay");
+  const body = document.getElementById("noticeBody");
+  overlay.classList.add("active");
+  body.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
+
+  const profile = await loadProfile();
+
+  if(!profile || !profile.name){
+    body.innerHTML = `
+      <div class="name-gate">
+        <h2 class="block-title" style="margin-bottom:4px;">먼저 이름을 알려주세요</h2>
+        <div class="hint" id="noticeNameHint">글이나 댓글을 쓸 때 이름으로 표시돼요. 실명이 아니어도 괜찮아요.</div>
+        <input type="text" id="noticeNameInput" placeholder="예: 은혜, 김OO" maxlength="20">
+        <button class="btn-small" id="noticeSaveNameBtn">저장하고 계속하기</button>
+      </div>
+    `;
+    document.getElementById("noticeSaveNameBtn").onclick = async () => {
+      const v = document.getElementById("noticeNameInput").value.trim();
+      if(!v) return;
+      const btn = document.getElementById("noticeSaveNameBtn");
+      const hint = document.getElementById("noticeNameHint");
+      btn.disabled = true; btn.textContent = "저장 중…";
+      await saveProfile({name: v});
+      const check = await loadProfile();
+      if(check && check.name === v){ openNotice(); }
+      else {
+        btn.disabled = false; btn.textContent = "다시 저장하기";
+        hint.innerHTML = `글이나 댓글을 쓸 때 이름으로 표시돼요.<br><span style="color:#C0392B; font-weight:700;">저장에 실패했어요. 게시(Publish) 후 다시 시도해주세요.</span>`;
+      }
+    };
+    return;
+  }
+
+  body.innerHTML = `
+    ${profile.name === ADMIN_NAME ? `
+      <div class="notice-write-card">
+        <h2 class="block-title" style="margin-bottom:10px;">새 공지 작성</h2>
+        <textarea class="notice-write-input" id="noticeInput" placeholder="공지사항을 적어보세요."></textarea>
+        <button class="btn-small" id="noticePostBtn" style="width:100%; text-align:center;">게시하기</button>
+      </div>
+    ` : `
+      <div class="confirm-hint" style="margin-bottom:16px;">공지는 청지기만 올릴 수 있어요. 아래 글을 확인하고 댓글로 응답해보세요.</div>
+    `}
+    <div id="noticeListWrap"><div class="loading" style="height:auto; padding:30px 0;">불러오는 중…</div></div>
+  `;
+
+  if(profile.name === ADMIN_NAME){
+    document.getElementById("noticePostBtn").onclick = async () => {
+      const input = document.getElementById("noticeInput");
+      const text = input.value.trim();
+      if(!text) return;
+      const btn = document.getElementById("noticePostBtn");
+      btn.disabled = true; btn.textContent = "게시 중…";
+      const ok = await postNotice(text);
+      btn.disabled = false; btn.textContent = "게시하기";
+      if(ok){
+        input.value = "";
+        renderNoticeList(profile.name);
+      }
+    };
+  }
+
+  renderNoticeList(profile.name);
+}
+
+async function renderNoticeList(myName){
+  const wrap = document.getElementById("noticeListWrap");
+  if(!wrap) return;
+  const notices = await loadNotices();
+  if(notices.length === 0){
+    wrap.innerHTML = `<div class="empty-state">아직 게시글이 없어요.<br>첫 글을 남겨보세요.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = notices.map(n => `
+    <div class="notice-card" id="notice-${n.id}">
+      <div class="notice-head">
+        <div class="avatar" style="width:30px; height:30px; font-size:12px; background:${nameColor(n.name||"?")}">${escapeHtml((n.name||"?").trim()[0]||"?")}</div>
+        <div>
+          <div class="board-name" style="margin-bottom:0;">${escapeHtml(n.name||"익명")}</div>
+          <div class="notice-time">${formatNoticeTime(n.createdAt)}</div>
+        </div>
+      </div>
+      <div class="notice-content">${escapeHtml(n.content||"")}</div>
+      <div class="notice-actions">
+        <button class="notice-action-btn" id="confirmBtn-${n.id}">✅ 확인 …</button>
+        <button class="notice-action-btn" id="commentToggle-${n.id}">💬 댓글 …</button>
+      </div>
+      <div class="notice-comments" id="comments-${n.id}" style="display:none;">
+        <div id="commentList-${n.id}"><div class="loading" style="height:auto; padding:12px 0;">불러오는 중…</div></div>
+        <div class="notice-comment-input-row">
+          <input type="text" class="notice-comment-input" id="commentInput-${n.id}" placeholder="댓글을 남겨보세요" maxlength="200">
+          <button class="notice-comment-send" id="commentSend-${n.id}">등록</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  for(const n of notices){
+    refreshNoticeConfirmButton(n.id, myName);
+
+    document.getElementById(`confirmBtn-${n.id}`).onclick = async () => {
+      await toggleNoticeConfirm(n.id);
+      refreshNoticeConfirmButton(n.id, myName);
+    };
+
+    document.getElementById(`commentToggle-${n.id}`).onclick = async () => {
+      const box = document.getElementById(`comments-${n.id}`);
+      const isHidden = box.style.display === "none";
+      box.style.display = isHidden ? "block" : "none";
+      if(isHidden) await refreshNoticeComments(n.id, myName);
+    };
+
+    document.getElementById(`commentSend-${n.id}`).onclick = async () => {
+      const input = document.getElementById(`commentInput-${n.id}`);
+      const text = input.value.trim();
+      if(!text) return;
+      const btn = document.getElementById(`commentSend-${n.id}`);
+      btn.disabled = true;
+      const ok = await postNoticeComment(n.id, text);
+      btn.disabled = false;
+      if(ok){
+        input.value = "";
+        await refreshNoticeComments(n.id, myName);
+        refreshNoticeCommentCount(n.id);
+      }
+    };
+
+    refreshNoticeCommentCount(n.id);
+  }
+}
+
+async function refreshNoticeConfirmButton(postId, myName){
+  const btn = document.getElementById(`confirmBtn-${postId}`);
+  if(!btn) return;
+  const confirms = await loadNoticeConfirms(postId);
+  const iConfirmed = confirms.some(c => c.name === myName);
+  btn.textContent = `✅ 확인 ${confirms.length}`;
+  btn.classList.toggle("active", iConfirmed);
+}
+
+async function refreshNoticeCommentCount(postId){
+  const btn = document.getElementById(`commentToggle-${postId}`);
+  if(!btn) return;
+  const comments = await loadNoticeComments(postId);
+  btn.textContent = `💬 댓글 ${comments.length}`;
+}
+
+async function refreshNoticeComments(postId, myName){
+  const listEl = document.getElementById(`commentList-${postId}`);
+  if(!listEl) return;
+  const comments = await loadNoticeComments(postId);
+  if(comments.length === 0){
+    listEl.innerHTML = `<div class="notice-comment-item" style="color:var(--ink-soft);">아직 댓글이 없어요.</div>`;
+    return;
+  }
+  listEl.innerHTML = comments.map(c => `
+    <div class="notice-comment-item"><b>${escapeHtml(c.name||"익명")}</b>${escapeHtml(c.comment||"")}</div>
+  `).join("");
+}
+
+function formatNoticeTime(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  return `${d.getMonth()+1}월 ${d.getDate()}일 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 async function openAllRecitations(){
