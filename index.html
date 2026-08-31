@@ -611,6 +611,19 @@ async function loadScoreboard(){
   }catch(e){ return []; }
 }
 
+function weeklyTotalsFromScoreboard(scoreboard){
+  const wStart = weekStartDate(now);
+  const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 7);
+  return scoreboard.map(item=>{
+    let weekTotal = 0;
+    (item.history || []).forEach(h=>{
+      const t = h && h.at ? new Date(h.at) : null;
+      if(t && t >= wStart && t < wEnd) weekTotal += (h.amount || 0);
+    });
+    return {name: item.name, weekTotal};
+  }).sort((a,b)=> b.weekTotal - a.weekTotal);
+}
+
 function nameColor(name){
   const colors = ["#5B4372","#E38668","#7C9A78","#3E6B8A","#B08968","#8A6FA0","#C97B63"];
   let h = 0;
@@ -1660,10 +1673,14 @@ async function openWeekly(){
 
   const board = await loadWeeklyBoard();
   const scoreboard = await loadScoreboard();
+  const weeklyPoints = weeklyTotalsFromScoreboard(scoreboard);
   let myTotal = 0;
+  let myWeeklyTotal = 0;
   if(profile){
     const mine = scoreboard.find(s => s.name === profile.name);
     myTotal = mine ? (mine.total || 0) : 0;
+    const mineWeek = weeklyPoints.find(s => s.name === profile.name);
+    myWeeklyTotal = mineWeek ? mineWeek.weekTotal : 0;
   }
 
   const dayLabels = ["일","월","화","수","목","금","토"];
@@ -1706,6 +1723,22 @@ async function openWeekly(){
       }).join("");
 
   const medal = (idx) => idx===0 ? "🥇" : idx===1 ? "🥈" : idx===2 ? "🥉" : idx+1;
+
+  const weeklyScoreHtml = weeklyPoints.length === 0 || weeklyPoints.every(w=>w.weekTotal===0)
+    ? `<div class="empty-state">아직 이번 주 점수 기록이 없어요.</div>`
+    : weeklyPoints.map((item,idx)=>{
+        const isMe = profile && item.name === profile.name;
+        return `
+          <div class="rank-item ${idx===0 && item.weekTotal>0 ? 'champion':''}">
+            <div class="rank-num">${item.weekTotal>0 ? medal(idx) : idx+1}</div>
+            <div class="rank-body">
+              <div class="rank-name">${escapeHtml(item.name)} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
+            </div>
+            <div class="rank-count">${item.weekTotal}점</div>
+          </div>
+        `;
+      }).join("");
+
   const scoreHtml = scoreboard.length === 0
     ? `<div class="empty-state">아직 점수 기록이 없어요.</div>`
     : scoreboard.map((item,idx)=>{
@@ -1731,6 +1764,10 @@ async function openWeekly(){
     </div>
     <h2 class="block-title">함께하는 사람들 (이번 주)</h2>
     ${rankHtml}
+
+    <h2 class="block-title" style="margin-top:26px;">이번 주 점수 랭킹 · 나는 ${myWeeklyTotal}점</h2>
+    <div class="confirm-hint" style="margin-bottom:12px;">이번 주(일~토) 동안 얻은 점수만 합산했어요. 매주 새로 시작해요.</div>
+    ${weeklyScoreHtml}
 
     <h2 class="block-title" style="margin-top:26px;">누적 점수 랭킹 · 나는 ${myTotal}점</h2>
     ${scoreHtml}
