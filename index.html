@@ -428,6 +428,18 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fbDb = firebase.database();
 
+function safeParse(value){
+  // Firebase 콘솔에서 직접 편집하면 문자열이 아니라 객체 형태로 저장될 수 있어요.
+  // 이 경우에도 안전하게 처리해서 데이터가 유실되지 않도록 해요.
+  if(value === null || value === undefined) return value;
+  if(typeof value === "object") return value;
+  try{
+    return JSON.parse(value);
+  }catch(e){
+    return value;
+  }
+}
+
 function fbPath(key){
   // "recite:2026-08-11:sujin" -> "recite/2026-08-11/sujin", 특수문자 정리
   return key.replace(/:/g, '/').replace(/[.#$\[\]]/g, '_').replace(/\/+$/, '');
@@ -591,7 +603,7 @@ let hiddenWords = new Set();
 async function loadProfile(){
   try{
     const r = await window.storage.get("profile", false);
-    if(r && r.value){ return JSON.parse(r.value); }
+    if(r && r.value){ return safeParse(r.value); }
   }catch(e){}
   return null;
 }
@@ -611,7 +623,7 @@ async function addPoints(amount, reason){
   let data = {name:profile.name, total:0, history:[]};
   try{
     const r = await window.storage.get(key, true);
-    if(r && r.value) data = JSON.parse(r.value);
+    if(r && r.value) data = safeParse(r.value);
   }catch(e){}
   data.name = profile.name;
   data.total = (data.total || 0) + amount;
@@ -624,18 +636,18 @@ async function addPoints(amount, reason){
   return data.total;
 }
 
-async function adminAdjustScore(targetName, amount, reason){
+async function adminAdjustScore(targetName, amount, reason, atOverride){
   const slug = slugifyName(targetName);
   const key = `score:${slug}`;
   let data = {name: targetName, total: 0, history: []};
   try{
     const r = await window.storage.get(key, true);
-    if(r && r.value) data = JSON.parse(r.value);
+    if(r && r.value) data = safeParse(r.value);
   }catch(e){}
   data.name = targetName;
   data.total = (data.total || 0) + amount;
   data.history = data.history || [];
-  data.history.push({amount, reason: reason || "관리자 보정", at: new Date().toISOString()});
+  data.history.push({amount, reason: reason || "관리자 보정", at: atOverride || new Date().toISOString()});
   if(data.history.length > 60) data.history = data.history.slice(-60);
   await window.storage.set(key, JSON.stringify(data), true);
   return data.total;
@@ -649,7 +661,7 @@ async function loadScoreboard(){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (b.total||0) - (a.total||0));
@@ -685,7 +697,7 @@ async function loadRecitationsForDate(dateStr){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
@@ -713,7 +725,7 @@ async function loadTodaySharedJournals(){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
@@ -756,7 +768,7 @@ async function loadWalkPhotosForDate(dateStr){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
@@ -781,7 +793,7 @@ async function pingWeeklyCompletion(recited){
   let data = {name:profile.name, days:[], recitedDays:[], bonusAwarded:false};
   try{
     const r = await window.storage.get(key, true);
-    if(r && r.value) data = JSON.parse(r.value);
+    if(r && r.value) data = safeParse(r.value);
   }catch(e){}
   if(!data.days.includes(today)) data.days.push(today);
   if(recited && !data.recitedDays.includes(today)) data.recitedDays.push(today);
@@ -805,7 +817,7 @@ async function loadWeeklyBoard(){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (b.days?.length||0) - (a.days?.length||0));
@@ -816,7 +828,7 @@ async function loadWeeklyBoard(){
 async function loadState(){
   try{
     const r = await window.storage.get(`entry:${today}`, false);
-    if(r && r.value){ state = JSON.parse(r.value); }
+    if(r && r.value){ state = safeParse(r.value); }
   }catch(e){ /* no entry yet */ }
 }
 
@@ -835,7 +847,7 @@ async function getArchive(){
       try{
         const r = await window.storage.get(k, false);
         if(r && r.value){
-          const parsed = JSON.parse(r.value);
+          const parsed = safeParse(r.value);
           const dstr = k.replace("entry:","");
           items.push({date:dstr, ...parsed});
         }
@@ -1154,7 +1166,7 @@ async function renderReflectStep(){
   let shared = null;
   try{
     const r = await window.storage.get(`questions:${today}`, true);
-    if(r && r.value) shared = JSON.parse(r.value);
+    if(r && r.value) shared = safeParse(r.value);
   }catch(e){}
 
   const currentQs = (shared && shared.questions && shared.questions.length === defaultQs.length)
@@ -1851,7 +1863,7 @@ async function loadNotices(){
       try{
         const r = await window.storage.get(k, true);
         if(r && r.value){
-          const data = JSON.parse(r.value);
+          const data = safeParse(r.value);
           data.id = k.replace(/^notice:/, "");
           items.push(data);
         }
@@ -1870,7 +1882,7 @@ async function loadNoticeConfirms(postId){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     return items;
@@ -1885,7 +1897,7 @@ async function loadNoticeComments(postId){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(JSON.parse(r.value));
+        if(r && r.value) items.push(safeParse(r.value));
       }catch(e){}
     }
     items.sort((a,b)=> (a.at || "") < (b.at || "") ? -1 : 1);
@@ -2274,11 +2286,11 @@ async function renameProfile(newName){
       const newScoreKey = `score:${newSlug}`;
       const oldR = await window.storage.get(oldScoreKey, true);
       if(oldR && oldR.value){
-        const oldData = JSON.parse(oldR.value);
+        const oldData = safeParse(oldR.value);
         let newData = {name: newName, total: 0, history: []};
         try{
           const newR = await window.storage.get(newScoreKey, true);
-          if(newR && newR.value) newData = JSON.parse(newR.value);
+          if(newR && newR.value) newData = safeParse(newR.value);
         }catch(e){}
         newData.name = newName;
         newData.total = (newData.total || 0) + (oldData.total || 0);
@@ -2295,7 +2307,7 @@ async function renameProfile(newName){
       const newWeekKey = `weekcomplete:${wKey}:${newSlug}`;
       const oldR = await window.storage.get(oldWeekKey, true);
       if(oldR && oldR.value){
-        const oldData = JSON.parse(oldR.value);
+        const oldData = safeParse(oldR.value);
         oldData.name = newName;
         await window.storage.set(newWeekKey, JSON.stringify(oldData), true);
         await window.storage.delete(oldWeekKey, true);
@@ -2345,7 +2357,9 @@ async function openArchive(){
       <input type="text" id="adjNameInput" placeholder="대상 이름 (예: 김예은)" maxlength="20">
       <input type="number" id="adjAmountInput" placeholder="더할 점수 (예: 25, 마이너스는 -10)" style="margin-top:8px;">
       <input type="text" id="adjReasonInput" placeholder="사유 (예: 8/31 오전 누락분 보정)" style="margin-top:8px;">
-      <button class="btn-small" id="adjSubmitBtn">점수 반영하기</button>
+      <label class="field-label" style="margin-top:8px; font-size:12px;">해당 날짜 (비우면 오늘 · 주간 랭킹 반영을 위해 정확한 날짜 입력 권장)</label>
+      <input type="date" id="adjDateInput">
+      <button class="btn-small" id="adjSubmitBtn" style="margin-top:8px;">점수 반영하기</button>
       <div id="adjResultMsg" style="margin-top:8px; font-size:13px;"></div>
     </div>
   ` : "";
@@ -2357,19 +2371,22 @@ async function openArchive(){
       const name = document.getElementById("adjNameInput").value.trim();
       const amount = parseInt(document.getElementById("adjAmountInput").value, 10);
       const reason = document.getElementById("adjReasonInput").value.trim() || "관리자 보정";
+      const dateVal = document.getElementById("adjDateInput").value; // yyyy-mm-dd or ""
       const msg = document.getElementById("adjResultMsg");
       if(!name || isNaN(amount)){
         msg.innerHTML = `<span style="color:#C0392B;">이름과 숫자 점수를 정확히 입력해주세요.</span>`;
         return;
       }
+      const atOverride = dateVal ? new Date(dateVal + "T12:00:00").toISOString() : null;
       const btn = document.getElementById("adjSubmitBtn");
       btn.disabled = true; btn.textContent = "반영 중…";
       try{
-        const newTotal = await adminAdjustScore(name, amount, reason);
+        const newTotal = await adminAdjustScore(name, amount, reason, atOverride);
         msg.innerHTML = `<span style="color:var(--ok); font-weight:700;">✓ ${escapeHtml(name)}님 ${amount>0?'+':''}${amount}점 반영 완료 (누적 ${newTotal}점)</span>`;
         document.getElementById("adjNameInput").value = "";
         document.getElementById("adjAmountInput").value = "";
         document.getElementById("adjReasonInput").value = "";
+        document.getElementById("adjDateInput").value = "";
       }catch(e){
         msg.innerHTML = `<span style="color:#C0392B;">반영 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
       }
