@@ -1733,6 +1733,15 @@ async function openWeekly(){
   overlay.classList.add("active");
   body.innerHTML = `<div class="loading" style="height:auto; padding:60px 0;">불러오는 중…</div>`;
 
+  try{
+    await renderWeeklyBody(body);
+  }catch(e){
+    console.error("openWeekly failed", e);
+    body.innerHTML = `<div class="empty-state">주간 챌린지를 불러오는 중 문제가 생겼어요.<br>잠시 후 다시 열어보시거나, 청지기에게 알려주세요.</div>`;
+  }
+}
+
+async function renderWeeklyBody(body){
   const profile = await loadProfile();
   const wDates = weekDatesFor(now);
   const isSaturday = now.getDay() === 6;
@@ -2474,7 +2483,8 @@ async function openArchive(){
 }
 
 function escapeHtml(s){
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  if(s === null || s === undefined) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
 function currentDateKey(){
