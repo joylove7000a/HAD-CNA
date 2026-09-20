@@ -1084,8 +1084,21 @@ function renderStep(){
 
       const hasAnyAnswer = state.answers.some(a => a && a.trim());
       if(hasAnyAnswer && !state.recordPointsAwarded){
-        const ok = await awardPointsToState(5, "묵상 기록 작성");
-        if(ok) state.recordPointsAwarded = true;
+        const recProfile = await loadProfile();
+        let alreadyAwardedElsewhere = false;
+        if(recProfile && recProfile.name){
+          const flags = await getDailyAwardFlags(slugifyName(recProfile.name));
+          alreadyAwardedElsewhere = !!flags.record;
+        }
+        if(alreadyAwardedElsewhere){
+          state.recordPointsAwarded = true; // 다른 기기에서 이미 지급됨, 중복 방지
+        } else {
+          const ok = await awardPointsToState(5, "묵상 기록 작성");
+          if(ok){
+            state.recordPointsAwarded = true;
+            if(recProfile && recProfile.name) await setDailyAwardFlag(slugifyName(recProfile.name), "record");
+          }
+        }
       }
 
       if(wantsShare && hasAnyAnswer){
@@ -1576,6 +1589,21 @@ function speedBonusFor(verseObj, durationSeconds){
   return {amount:2, label:"암송 완주 보너스"};
 }
 
+async function getDailyAwardFlags(slug){
+  try{
+    const r = await window.storage.get(`dailyAward:${today}:${slug}`, true);
+    if(r && r.value) return safeParse(r.value);
+  }catch(e){}
+  return {record:false, complete:false};
+}
+async function setDailyAwardFlag(slug, field){
+  const flags = await getDailyAwardFlags(slug);
+  flags[field] = true;
+  try{
+    await window.storage.set(`dailyAward:${today}:${slug}`, JSON.stringify(flags), true);
+  }catch(e){ console.error("daily award flag save failed", e); }
+}
+
 async function awardPointsToState(amount, reason){
   if(amount <= 0) return false;
   const total = await addPoints(amount, reason);
@@ -1587,7 +1615,20 @@ async function awardPointsToState(amount, reason){
 }
 
 async function awardDailyPoints(recited, durationSeconds){
-  if(state.pointsAwarded) return; // 이미 성공적으로 채점됨
+  if(state.pointsAwarded) return; // 이 기기에서는 이미 채점됨
+
+  const profileCheck = await loadProfile();
+  if(profileCheck && profileCheck.name){
+    const slug = slugifyName(profileCheck.name);
+    const flags = await getDailyAwardFlags(slug);
+    if(flags.complete){
+      // 다른 기기에서 오늘 이미 채점됨 — 이 기기에서는 조용히 완료 처리만 하고 중복 지급하지 않음
+      state.pointsAwarded = true;
+      state.pointsAwardFailed = false;
+      await saveState();
+      return;
+    }
+  }
 
   const baseOk = await awardPointsToState(10, "일일 묵상 완료");
   if(!baseOk){
@@ -1614,6 +1655,10 @@ async function awardDailyPoints(recited, durationSeconds){
   if(streak > 0 && streak % 3 === 0 && streak !== lastBonusAt){
     await awardPointsToState(5, `연속 ${streak}일 보너스`);
     await saveProfile({lastStreakBonusAt: streak});
+  }
+
+  if(profile && profile.name){
+    await setDailyAwardFlag(slugifyName(profile.name), "complete");
   }
 
   const weeklyBonus = await pingWeeklyCompletion(recited);
