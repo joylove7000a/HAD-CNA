@@ -809,6 +809,79 @@ async function loadAllWalkDates(){
   }catch(e){ return []; }
 }
 
+async function maybeRunCleanup(){
+  try{
+    const r = await window.storage.get("cleanup:lastRun", true);
+    const lastRun = (r && r.value) ? safeParse(r.value) : null;
+    if(lastRun === today) return; // 오늘 이미 정리했으면 다시 안 함
+    await window.storage.set("cleanup:lastRun", JSON.stringify(today), true);
+    await cleanupOldData();
+  }catch(e){ console.error("cleanup check failed", e); }
+}
+
+function daysAgoKey(n){
+  const d = new Date(now); d.setDate(d.getDate() - n);
+  return dateKey(d);
+}
+
+async function cleanupOldData(){
+  const cutoff30 = daysAgoKey(30);   // 녹음·사진·나눔·질문: 30일 이상 지나면 삭제
+  const cutoff35 = daysAgoKey(35);   // 주간 개근 기록: 5주 지나면 삭제
+  const cutoff7 = daysAgoKey(7);     // 하루짜리 중복방지 표시: 일주일 지나면 삭제
+
+  // 암송 녹음 (가장 용량이 큰 데이터)
+  try{
+    const dates = await loadAllRecitationDates();
+    for(const d of dates){
+      if(d < cutoff30) await window.storage.delete(`recite:${d}:`, true);
+    }
+  }catch(e){ console.error("cleanup recite failed", e); }
+
+  // 나눔 사진 (용량이 큰 데이터)
+  try{
+    const dates = await loadAllWalkDates();
+    for(const d of dates){
+      if(d < cutoff30) await window.storage.delete(`walk:${d}:`, true);
+    }
+  }catch(e){ console.error("cleanup walk failed", e); }
+
+  // 묵상 나눔(텍스트)
+  try{
+    const list = await window.storage.list("share:", true);
+    const dates = (list && list.keys) ? list.keys.map(k => k.replace(/^share:/, "")) : [];
+    for(const d of dates){
+      if(d < cutoff30) await window.storage.delete(`share:${d}:`, true);
+    }
+  }catch(e){ console.error("cleanup share failed", e); }
+
+  // 그날의 확정 질문
+  try{
+    const list = await window.storage.list("questions:", true);
+    const dates = (list && list.keys) ? list.keys.map(k => k.replace(/^questions:/, "")) : [];
+    for(const d of dates){
+      if(d < cutoff30) await window.storage.delete(`questions:${d}`, true);
+    }
+  }catch(e){ console.error("cleanup questions failed", e); }
+
+  // 주간 개근 현황 (5주 지난 것만 정리, 최근 챌린지 화면엔 영향 없음)
+  try{
+    const list = await window.storage.list("weekcomplete:", true);
+    const weeks = (list && list.keys) ? list.keys.map(k => k.replace(/^weekcomplete:/, "")) : [];
+    for(const w of weeks){
+      if(w < cutoff35) await window.storage.delete(`weekcomplete:${w}:`, true);
+    }
+  }catch(e){ console.error("cleanup weekcomplete failed", e); }
+
+  // 하루짜리 중복 지급 방지 표시 (짧게만 필요)
+  try{
+    const list = await window.storage.list("dailyAward:", true);
+    const dates = (list && list.keys) ? list.keys.map(k => k.replace(/^dailyAward:/, "")) : [];
+    for(const d of dates){
+      if(d < cutoff7) await window.storage.delete(`dailyAward:${d}:`, true);
+    }
+  }catch(e){ console.error("cleanup dailyAward failed", e); }
+}
+
 async function pingWeeklyCompletion(recited){
   const profile = await loadProfile();
   if(!profile || !profile.name) return;
@@ -2653,6 +2726,7 @@ window.addEventListener('focus', reloadIfNewDay);
     }
   }catch(e){ console.error("weekly verse plan load failed", e); }
   render();
+  maybeRunCleanup(); // 화면 표시를 막지 않고 백그라운드로 오래된 데이터 정리
 })();
 </script>
 </body>
