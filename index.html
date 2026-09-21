@@ -583,10 +583,34 @@ function weekDatesFor(d){
   return arr;
 }
 
+const THEME_OPTIONS = ["평안","인도하심","힘","사랑","믿음","소망","감사","위로","순종","지혜"];
+
+async function loadWeeklyVersePlan(weekKey){
+  try{
+    const r = await window.storage.get(`weekVerses:${weekKey}`, true);
+    if(r && r.value) return safeParse(r.value);
+  }catch(e){}
+  return null;
+}
+async function saveWeeklyVersePlan(weekKey, days, adminName){
+  const payload = { days, confirmedBy: adminName, confirmedAt: new Date().toISOString() };
+  await window.storage.set(`weekVerses:${weekKey}`, JSON.stringify(payload), true);
+}
+function verseForDateWithPlan(d, plan){
+  const key = dateKey(d);
+  if(plan && plan.days && plan.days[key] && plan.days[key].text && plan.days[key].ref){
+    return plan.days[key];
+  }
+  return verseForDate(d);
+}
+
 const now = new Date();
 const today = dateKey(now);
-const verse = verseForDate(now);
-const reflectQs = (REFLECTIONS[verse.theme] || []).slice(0,2);
+let verse = verseForDate(now);
+let reflectQs = (REFLECTIONS[verse.theme] || []).slice(0,2);
+function recomputeReflectQs(){
+  reflectQs = (REFLECTIONS[verse.theme] || []).slice(0,2);
+}
 
 let state = { read:false, journal:"", prayer:"", completed:false };
 let currentStep = 0; // 0 verse, 1 reflect, 2 journal, 3 recite, 4 photo share, 5 done
@@ -2444,6 +2468,33 @@ async function openArchive(){
   const profile = await loadProfile();
   const items = await getArchive();
 
+  const isAdmin = profile && profile.name === ADMIN_NAME;
+  let versePlanRows = "";
+  if(isAdmin){
+    const wKey = dateKey(weekStartDate(now));
+    const existingPlan = await loadWeeklyVersePlan(wKey);
+    const dayLabels = ["일","월","화","수","목","금","토"];
+    const wDates = weekDatesFor(now);
+    versePlanRows = wDates.map((dstr, i) => {
+      const d = new Date(dstr + "T00:00:00");
+      const current = (existingPlan && existingPlan.days && existingPlan.days[dstr] && existingPlan.days[dstr].text)
+        ? existingPlan.days[dstr]
+        : verseForDate(d);
+      const themeOptionsHtml = THEME_OPTIONS.map(t => `<option value="${t}" ${current.theme===t?"selected":""}>${t}</option>`).join("");
+      return `
+        <div class="q-edit-card" data-date="${dstr}">
+          <div class="q-edit-label">${dayLabels[i]}요일 (${dstr})</div>
+          <input type="text" class="verse-plan-ref" data-date="${dstr}" placeholder="성구 (예: 요한복음 3:16)" value="${escapeHtml(current.ref||"")}"
+            style="width:100%; border:none; padding:0 14px; font-size:13.5px; background:transparent; margin-bottom:6px;">
+          <textarea class="verse-plan-text" data-date="${dstr}" style="border:none; min-height:56px; padding:0 14px 10px; width:100%; font-family:'Noto Sans KR', sans-serif; font-size:13.5px;">${escapeHtml(current.text||"")}</textarea>
+          <select class="verse-plan-theme" data-date="${dstr}" style="margin:0 14px 12px; border:1px solid #EFE7D6; border-radius:8px; padding:6px 8px; font-size:12.5px;">
+            ${themeOptionsHtml}
+          </select>
+        </div>
+      `;
+    }).join("");
+  }
+
   const profileHtml = `
     <div class="name-gate" style="margin-bottom:22px;">
       <h2 class="block-title" style="margin-bottom:4px;">내 정보</h2>
@@ -2467,6 +2518,16 @@ async function openArchive(){
         `;
       }).join("");
 
+  const versePlanHtml = isAdmin ? `
+    <div class="name-gate" style="margin-bottom:22px; border:1px solid var(--sunrise);">
+      <h2 class="block-title" style="margin-bottom:4px;">📖 이번 주 말씀 확정</h2>
+      <div class="hint">요일별 말씀을 확인하고, 필요하면 성구·본문·주제를 직접 고쳐서 확정하세요. 확정하면 이번 주 모든 참여자에게 이 말씀이 그대로 보여요.</div>
+    </div>
+    ${versePlanRows}
+    <button class="btn-small" id="verseConfirmBtn" style="width:100%; text-align:center; margin-bottom:22px;">이번 주 말씀 확정하기</button>
+    <div id="verseConfirmMsg" style="margin-bottom:22px; font-size:13px;"></div>
+  ` : "";
+
   const adminHtml = (profile && profile.name === ADMIN_NAME) ? `
     <div class="name-gate" style="margin-bottom:22px; border:1px solid var(--sunrise);">
       <h2 class="block-title" style="margin-bottom:4px;">🛠️ 관리자 점수 보정</h2>
@@ -2481,7 +2542,7 @@ async function openArchive(){
     </div>
   ` : "";
 
-  body.innerHTML = profileHtml + adminHtml + `<h2 class="block-title">지난 묵상 기록</h2>` + archiveHtml;
+  body.innerHTML = profileHtml + versePlanHtml + adminHtml + `<h2 class="block-title">지난 묵상 기록</h2>` + archiveHtml;
 
   if(profile && profile.name === ADMIN_NAME){
     document.getElementById("adjSubmitBtn").onclick = async () => {
@@ -2508,6 +2569,32 @@ async function openArchive(){
         msg.innerHTML = `<span style="color:#C0392B;">반영 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
       }
       btn.disabled = false; btn.textContent = "점수 반영하기";
+    };
+
+    document.getElementById("verseConfirmBtn").onclick = async () => {
+      const btn = document.getElementById("verseConfirmBtn");
+      const msg = document.getElementById("verseConfirmMsg");
+      btn.disabled = true; btn.textContent = "저장 중…";
+      try{
+        const wKey = dateKey(weekStartDate(now));
+        const days = {};
+        document.querySelectorAll(".verse-plan-ref").forEach(el => {
+          const d = el.dataset.date;
+          const ref = el.value.trim();
+          const text = document.querySelector(`.verse-plan-text[data-date="${d}"]`).value.trim();
+          const theme = document.querySelector(`.verse-plan-theme[data-date="${d}"]`).value;
+          days[d] = {ref, text, theme};
+        });
+        await saveWeeklyVersePlan(wKey, days, profile.name);
+        if(days[today] && days[today].text && days[today].ref){
+          verse = days[today];
+          recomputeReflectQs();
+        }
+        msg.innerHTML = `<span style="color:var(--ok); font-weight:700;">✓ 이번 주 말씀이 확정됐어요. 오늘 화면에도 바로 반영돼요.</span>`;
+      }catch(e){
+        msg.innerHTML = `<span style="color:#C0392B;">저장 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
+      }
+      btn.disabled = false; btn.textContent = "이번 주 말씀 확정하기";
     };
   }
 
@@ -2550,6 +2637,14 @@ window.addEventListener('focus', reloadIfNewDay);
 
 (async function init(){
   await loadState();
+  try{
+    const wKey = dateKey(weekStartDate(now));
+    const plan = await loadWeeklyVersePlan(wKey);
+    if(plan){
+      verse = verseForDateWithPlan(now, plan);
+      recomputeReflectQs();
+    }
+  }catch(e){ console.error("weekly verse plan load failed", e); }
   render();
 })();
 </script>
