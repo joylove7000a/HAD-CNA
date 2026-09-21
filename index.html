@@ -2504,15 +2504,22 @@ async function openArchive(){
     </div>
   `;
 
+  const weekKeysNeeded = [...new Set(items.map(it => dateKey(weekStartDate(new Date(it.date + "T00:00:00")))))];
+  const weekPlanMap = {};
+  for(const wk of weekKeysNeeded){
+    weekPlanMap[wk] = await loadWeeklyVersePlan(wk);
+  }
+
   const archiveHtml = items.length === 0
     ? `<div class="empty-state">아직 기록이 없어요.<br>오늘의 묵상을 마치면<br>이곳에 쌓이기 시작해요.</div>`
     : items.map(it => {
         const d = new Date(it.date + "T00:00:00");
-        const v = verseForDate(d);
+        const wk = dateKey(weekStartDate(d));
+        const v = verseForDateWithPlan(d, weekPlanMap[wk]);
         return `
           <div class="archive-item">
             <div class="archive-date">${it.date} (${weekdayKo(d)}) ${it.completed ? "· 완료" : ""} ${it.reciteSubmitted ? "· 🎙️ 암송" : ""}</div>
-            <div class="archive-verse">"${v.text}" — ${v.ref}</div>
+            <div class="archive-verse">"${escapeHtml(v.text)}" — ${escapeHtml(v.ref)}</div>
             ${it.journal ? `<div class="archive-journal">${escapeHtml(it.journal)}</div>` : ""}
           </div>
         `;
