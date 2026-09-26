@@ -553,7 +553,9 @@ const REFLECTIONS = {
   "순종": ["요즘 하나님의 뜻보다 내 뜻이 앞섰던 순간이 있었나요?", "오늘 순종으로 바꾸고 싶은 태도는 무엇인가요?"],
   "지혜": ["오늘 지혜가 필요한 선택이 있나요?", "이 말씀은 그 선택에 어떤 기준을 제시하나요?"]
 };
-const GENERIC_Q = "이 말씀에서 하나님이 나에게 개인적으로 하시는 말씀은 무엇이라고 느껴지나요?";
+function genericQuestion(){
+  return `이 말씀(${verse.ref})에서 하나님이 나에게 개인적으로 하시는 말씀은 무엇이라고 느껴지나요?`;
+}
 
 function pad(n){return String(n).padStart(2,"0");}
 function dateKey(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
@@ -602,6 +604,71 @@ function verseForDateWithPlan(d, plan){
     return plan.days[key];
   }
   return verseForDate(d);
+}
+
+async function renderVersePlanContainer(weekOffset, adminName){
+  const container = document.getElementById("versePlanContainer");
+  if(!container) return;
+  container.innerHTML = `<div class="loading" style="height:auto; padding:40px 0;">불러오는 중…</div>`;
+
+  const baseDate = new Date(now);
+  baseDate.setDate(baseDate.getDate() + weekOffset * 7);
+  const wKey = dateKey(weekStartDate(baseDate));
+  const wDates = weekDatesFor(baseDate);
+  const dayLabels = ["일","월","화","수","목","금","토"];
+  const existingPlan = await loadWeeklyVersePlan(wKey);
+
+  const rowsHtml = wDates.map((dstr, i) => {
+    const d = new Date(dstr + "T00:00:00");
+    const current = (existingPlan && existingPlan.days && existingPlan.days[dstr] && existingPlan.days[dstr].text)
+      ? existingPlan.days[dstr]
+      : verseForDate(d);
+    const themeOptionsHtml = THEME_OPTIONS.map(t => `<option value="${t}" ${current.theme===t?"selected":""}>${t}</option>`).join("");
+    return `
+      <div class="q-edit-card" data-date="${dstr}">
+        <div class="q-edit-label">${dayLabels[i]}요일 (${dstr})</div>
+        <input type="text" class="verse-plan-ref" data-date="${dstr}" placeholder="성구 (예: 요한복음 3:16)" value="${escapeHtml(current.ref||"")}"
+          style="width:100%; border:none; padding:0 14px; font-size:13.5px; background:transparent; margin-bottom:6px;">
+        <textarea class="verse-plan-text" data-date="${dstr}" style="border:none; min-height:56px; padding:0 14px 10px; width:100%; font-family:'Noto Sans KR', sans-serif; font-size:13.5px;">${escapeHtml(current.text||"")}</textarea>
+        <select class="verse-plan-theme" data-date="${dstr}" style="margin:0 14px 12px; border:1px solid #EFE7D6; border-radius:8px; padding:6px 8px; font-size:12.5px;">
+          ${themeOptionsHtml}
+        </select>
+      </div>
+    `;
+  }).join("");
+
+  const label = weekOffset === 0 ? "이번 주" : "다음 주";
+  container.innerHTML = `
+    ${existingPlan ? `<div class="confirmed-tag" style="margin-bottom:10px;">✓ ${escapeHtml(existingPlan.confirmedBy || ADMIN_NAME)}님이 확정한 말씀이에요</div>` : ''}
+    ${rowsHtml}
+    <button class="btn-small" id="verseConfirmBtn" style="width:100%; text-align:center; margin-bottom:10px;">${label} 말씀 확정하기</button>
+    <div id="verseConfirmMsg" style="margin-bottom:22px; font-size:13px;"></div>
+  `;
+
+  document.getElementById("verseConfirmBtn").onclick = async () => {
+    const btn = document.getElementById("verseConfirmBtn");
+    const msg = document.getElementById("verseConfirmMsg");
+    btn.disabled = true; btn.textContent = "저장 중…";
+    try{
+      const days = {};
+      container.querySelectorAll(".verse-plan-ref").forEach(el => {
+        const d = el.dataset.date;
+        const ref = el.value.trim();
+        const text = container.querySelector(`.verse-plan-text[data-date="${d}"]`).value.trim();
+        const theme = container.querySelector(`.verse-plan-theme[data-date="${d}"]`).value;
+        days[d] = {ref, text, theme};
+      });
+      await saveWeeklyVersePlan(wKey, days, adminName);
+      if(weekOffset === 0 && days[today] && days[today].text && days[today].ref){
+        verse = days[today];
+        recomputeReflectQs();
+      }
+      msg.innerHTML = `<span style="color:var(--ok); font-weight:700;">✓ ${label} 말씀이 확정됐어요.${weekOffset===0 ? ' 오늘 화면에도 바로 반영돼요.' : ' 해당 주가 시작되면 자동으로 반영돼요.'}</span>`;
+    }catch(e){
+      msg.innerHTML = `<span style="color:#C0392B;">저장 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
+    }
+    btn.disabled = false; btn.textContent = `${label} 말씀 확정하기`;
+  };
 }
 
 const now = new Date();
@@ -721,13 +788,60 @@ async function loadRecitationsForDate(dateStr){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(safeParse(r.value));
+        if(r && r.value){
+          const data = safeParse(r.value);
+          data.id = k.replace(`recite:${dateStr}:`, "");
+          items.push(data);
+        }
       }catch(e){}
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
     return items;
   }catch(e){ return []; }
 }
+async function loadRecitationAudio(dateStr, id){
+  try{
+    const r = await window.storage.get(`reciteAudio:${dateStr}:${id}`, true);
+    if(r && r.value) return safeParse(r.value);
+  }catch(e){}
+  return null;
+}
+
+let audioControlSeq = 0;
+function renderAudioControlHtml(item, dateStr){
+  if(item.audio){
+    // 예전 방식으로 저장된 항목(음성이 이미 함께 불러와짐) — 그대로 표시
+    return `<audio class="board-audio" controls src="${item.audio}"></audio>`;
+  }
+  audioControlSeq++;
+  const uid = `audwrap_${audioControlSeq}`;
+  return `
+    <div id="${uid}">
+      <button class="notice-action-btn play-audio-btn" data-date="${dateStr}" data-id="${escapeHtml(item.id||"")}" data-target="${uid}">▶ 재생</button>
+    </div>
+  `;
+}
+function wireAudioControls(container){
+  if(!container) return;
+  container.querySelectorAll(".play-audio-btn").forEach(btn=>{
+    btn.onclick = async () => {
+      const d = btn.dataset.date, id = btn.dataset.id, targetId = btn.dataset.target;
+      btn.disabled = true; btn.textContent = "불러오는 중…";
+      try{
+        const audioData = await loadRecitationAudio(d, id);
+        const wrap = document.getElementById(targetId);
+        if(audioData && wrap){
+          wrap.innerHTML = `<audio class="board-audio" controls autoplay src="${audioData}"></audio>`;
+        } else {
+          btn.disabled = false; btn.textContent = "재생 실패, 다시 시도";
+        }
+      }catch(e){
+        btn.disabled = false; btn.textContent = "재생 실패, 다시 시도";
+      }
+    };
+  });
+}
+
 async function loadTodayRecitations(){
   return loadRecitationsForDate(today);
 }
@@ -792,12 +906,58 @@ async function loadWalkPhotosForDate(dateStr){
     for(const k of list.keys){
       try{
         const r = await window.storage.get(k, true);
-        if(r && r.value) items.push(safeParse(r.value));
+        if(r && r.value){
+          const data = safeParse(r.value);
+          data.id = k.replace(`walk:${dateStr}:`, "");
+          items.push(data);
+        }
       }catch(e){}
     }
     items.sort((a,b)=> (a.submittedAt || "") < (b.submittedAt || "") ? -1 : 1);
     return items;
   }catch(e){ return []; }
+}
+async function loadWalkPhotoBlob(dateStr, id){
+  try{
+    const r = await window.storage.get(`walkPhoto:${dateStr}:${id}`, true);
+    if(r && r.value) return safeParse(r.value);
+  }catch(e){}
+  return null;
+}
+let photoControlSeq = 0;
+function renderPhotoControlHtml(item, dateStr){
+  if(item.photo){
+    // 예전 방식으로 저장된 항목(사진이 이미 함께 불러와짐) — 그대로 표시
+    return `<img class="walk-board-photo" src="${item.photo}" alt="${escapeHtml(item.name||"")}님이 나눈 사진">`;
+  }
+  photoControlSeq++;
+  const uid = `photowrap_${photoControlSeq}`;
+  return `
+    <div class="walk-board-photo" id="${uid}" style="display:flex; align-items:center; justify-content:center; background:var(--paper-dim); cursor:pointer;" data-date="${dateStr}" data-id="${escapeHtml(item.id||"")}" data-target="${uid}">
+      <span class="chip-btn view-photo-btn" data-date="${dateStr}" data-id="${escapeHtml(item.id||"")}" data-target="${uid}">📷 사진 보기</span>
+    </div>
+  `;
+}
+function wirePhotoControls(container){
+  if(!container) return;
+  container.querySelectorAll(".view-photo-btn").forEach(btn=>{
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const d = btn.dataset.date, id = btn.dataset.id, targetId = btn.dataset.target;
+      btn.textContent = "불러오는 중…";
+      try{
+        const photoData = await loadWalkPhotoBlob(d, id);
+        const wrap = document.getElementById(targetId);
+        if(photoData && wrap){
+          wrap.outerHTML = `<img class="walk-board-photo" src="${photoData}" alt="나눈 사진">`;
+        } else {
+          btn.textContent = "📷 불러오기 실패, 다시 시도";
+        }
+      }catch(e){
+        btn.textContent = "📷 불러오기 실패, 다시 시도";
+      }
+    };
+  });
 }
 async function loadAllWalkDates(){
   try{
@@ -833,7 +993,10 @@ async function cleanupOldData(){
   try{
     const dates = await loadAllRecitationDates();
     for(const d of dates){
-      if(d < cutoff30) await window.storage.delete(`recite:${d}:`, true);
+      if(d < cutoff30){
+        await window.storage.delete(`recite:${d}:`, true);
+        await window.storage.delete(`reciteAudio:${d}:`, true);
+      }
     }
   }catch(e){ console.error("cleanup recite failed", e); }
 
@@ -841,7 +1004,10 @@ async function cleanupOldData(){
   try{
     const dates = await loadAllWalkDates();
     for(const d of dates){
-      if(d < cutoff30) await window.storage.delete(`walk:${d}:`, true);
+      if(d < cutoff30){
+        await window.storage.delete(`walk:${d}:`, true);
+        await window.storage.delete(`walkPhoto:${d}:`, true);
+      }
     }
   }catch(e){ console.error("cleanup walk failed", e); }
 
@@ -1109,7 +1275,7 @@ function renderStep(){
   }
 
   else if(currentStep === 2){
-    const defaultQs = [...reflectQs, GENERIC_Q];
+    const defaultQs = [...reflectQs, genericQuestion()];
     const qs = (state.reflectQuestions && state.reflectQuestions.length === defaultQs.length)
       ? state.reflectQuestions : defaultQs;
     const answers = (state.answers && state.answers.length === qs.length) ? state.answers : qs.map(()=>"");
@@ -1267,7 +1433,7 @@ const ADMIN_NAME = "청지기";
 async function renderReflectStep(){
   const content = document.getElementById("content");
   const bar = document.getElementById("bottomBar");
-  const defaultQs = [...reflectQs, GENERIC_Q];
+  const defaultQs = [...reflectQs, genericQuestion()];
 
   bar.innerHTML = `<button class="btn btn-ghost" id="backBtn">이전</button><button class="btn btn-primary" disabled>불러오는 중…</button>`;
   document.getElementById("backBtn").onclick = () => { currentStep = 0; renderStep(); };
@@ -1522,10 +1688,13 @@ async function renderPhotoStep(){
         const btn = document.getElementById("sharePhotoBtn");
         btn.disabled = true; btn.textContent = "올리는 중…";
         const caption = document.getElementById("stepCaptionInput").value.trim();
-        const key = `walk:${today}:${slugifyName(profile.name)}_${Date.now()}`;
-        const payload = { name: profile.name, photo: pendingWalkPhoto, caption, submittedAt: new Date().toISOString() };
+        const id = `${slugifyName(profile.name)}_${Date.now()}`;
+        const metaKey = `walk:${today}:${id}`;
+        const blobKey = `walkPhoto:${today}:${id}`;
+        const meta = { name: profile.name, caption, submittedAt: new Date().toISOString() };
         try{
-          await window.storage.set(key, JSON.stringify(payload), true);
+          await window.storage.set(metaKey, JSON.stringify(meta), true);
+          await window.storage.set(blobKey, pendingWalkPhoto, true);
         }catch(err){ console.error("photo step save failed", err); }
         currentStep = 5;
         renderStep();
@@ -1548,7 +1717,7 @@ async function renderPhotoStep(){
     const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
     return `
       <div class="walk-board-item">
-        <img class="walk-board-photo" src="${item.photo}" alt="${escapeHtml(item.name||"")}님이 나눈 사진">
+        ${renderPhotoControlHtml(item, today)}
         <div class="walk-board-info">
           <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
           <div class="board-time">${timeStr}</div>
@@ -1557,6 +1726,7 @@ async function renderPhotoStep(){
       </div>
     `;
   }).join("");
+  wirePhotoControls(listEl);
 }
 
 async function startRecording(){
@@ -1653,16 +1823,18 @@ async function onRecordingStop(){
 
 async function submitRecitation(){
   const profile = await loadProfile();
-  const key = `recite:${today}:${slugifyName(profile.name)}`;
-  const payload = {
+  const id = slugifyName(profile.name);
+  const metaKey = `recite:${today}:${id}`;
+  const audioKey = `reciteAudio:${today}:${id}`;
+  const meta = {
     name: profile.name,
     ref: verse.ref,
-    audio: recordedDataUrl,
     duration: recordSeconds,
     submittedAt: new Date().toISOString()
   };
   try{
-    await window.storage.set(key, JSON.stringify(payload), true);
+    await window.storage.set(metaKey, JSON.stringify(meta), true);
+    await window.storage.set(audioKey, recordedDataUrl, true);
   }catch(e){
     console.error("submit failed", e);
   }
@@ -1814,11 +1986,12 @@ async function loadAndRenderBoard(myName){
         <div class="board-body">
           <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
           <div class="board-time">${timeStr}</div>
-          <audio class="board-audio" controls src="${item.audio}"></audio>
+          ${renderAudioControlHtml(item, today)}
         </div>
       </div>
     `;
   }).join("");
+  wireAudioControls(listEl);
 }
 
 async function renderDone(){
@@ -2192,10 +2365,13 @@ async function openWalk(){
     const btn = document.getElementById("walkSubmitBtn");
     btn.disabled = true; btn.textContent = "올리는 중…";
     const caption = document.getElementById("walkCaptionInput").value.trim();
-    const key = `walk:${today}:${slugifyName(profile.name)}_${Date.now()}`;
-    const payload = { name: profile.name, photo: pendingWalkPhoto, caption, submittedAt: new Date().toISOString() };
+    const id = `${slugifyName(profile.name)}_${Date.now()}`;
+    const metaKey = `walk:${today}:${id}`;
+    const blobKey = `walkPhoto:${today}:${id}`;
+    const meta = { name: profile.name, caption, submittedAt: new Date().toISOString() };
     try{
-      await window.storage.set(key, JSON.stringify(payload), true);
+      await window.storage.set(metaKey, JSON.stringify(meta), true);
+      await window.storage.set(blobKey, pendingWalkPhoto, true);
       btn.textContent = "✓ 나눴어요";
       renderWalkBoard(profile.name);
     }catch(e){
@@ -2221,7 +2397,7 @@ async function renderWalkBoard(myName){
     const timeStr = t ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : "";
     return `
       <div class="walk-board-item">
-        <img class="walk-board-photo" src="${item.photo}" alt="${escapeHtml(item.name||"")}님이 나눈 사진">
+        ${renderPhotoControlHtml(item, today)}
         <div class="walk-board-info">
           <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
           <div class="board-time">${timeStr}</div>
@@ -2230,6 +2406,7 @@ async function renderWalkBoard(myName){
       </div>
     `;
   }).join("");
+  wirePhotoControls(listEl);
 }
 
 async function openNotice(){
@@ -2472,13 +2649,14 @@ async function openAllRecitations(){
           <div class="board-body">
             <div class="board-name">${escapeHtml(item.name || "익명")} ${isMe ? '<span class="me-badge">나</span>' : ''}</div>
             <div class="board-time">${timeStr} · ${escapeHtml(item.ref || "")}</div>
-            <audio class="board-audio" controls src="${item.audio}"></audio>
+            ${renderAudioControlHtml(item, d)}
           </div>
         </div>
       `;
     }).join("");
   }
   body.innerHTML = html || `<div class="empty-state">아직 등록된 암송 녹음이 없어요.</div>`;
+  wireAudioControls(body);
 }
 
 async function renameProfile(newName){
@@ -2542,31 +2720,6 @@ async function openArchive(){
   const items = await getArchive();
 
   const isAdmin = profile && profile.name === ADMIN_NAME;
-  let versePlanRows = "";
-  if(isAdmin){
-    const wKey = dateKey(weekStartDate(now));
-    const existingPlan = await loadWeeklyVersePlan(wKey);
-    const dayLabels = ["일","월","화","수","목","금","토"];
-    const wDates = weekDatesFor(now);
-    versePlanRows = wDates.map((dstr, i) => {
-      const d = new Date(dstr + "T00:00:00");
-      const current = (existingPlan && existingPlan.days && existingPlan.days[dstr] && existingPlan.days[dstr].text)
-        ? existingPlan.days[dstr]
-        : verseForDate(d);
-      const themeOptionsHtml = THEME_OPTIONS.map(t => `<option value="${t}" ${current.theme===t?"selected":""}>${t}</option>`).join("");
-      return `
-        <div class="q-edit-card" data-date="${dstr}">
-          <div class="q-edit-label">${dayLabels[i]}요일 (${dstr})</div>
-          <input type="text" class="verse-plan-ref" data-date="${dstr}" placeholder="성구 (예: 요한복음 3:16)" value="${escapeHtml(current.ref||"")}"
-            style="width:100%; border:none; padding:0 14px; font-size:13.5px; background:transparent; margin-bottom:6px;">
-          <textarea class="verse-plan-text" data-date="${dstr}" style="border:none; min-height:56px; padding:0 14px 10px; width:100%; font-family:'Noto Sans KR', sans-serif; font-size:13.5px;">${escapeHtml(current.text||"")}</textarea>
-          <select class="verse-plan-theme" data-date="${dstr}" style="margin:0 14px 12px; border:1px solid #EFE7D6; border-radius:8px; padding:6px 8px; font-size:12.5px;">
-            ${themeOptionsHtml}
-          </select>
-        </div>
-      `;
-    }).join("");
-  }
 
   const profileHtml = `
     <div class="name-gate" style="margin-bottom:22px;">
@@ -2600,12 +2753,14 @@ async function openArchive(){
 
   const versePlanHtml = isAdmin ? `
     <div class="name-gate" style="margin-bottom:22px; border:1px solid var(--sunrise);">
-      <h2 class="block-title" style="margin-bottom:4px;">📖 이번 주 말씀 확정</h2>
-      <div class="hint">요일별 말씀을 확인하고, 필요하면 성구·본문·주제를 직접 고쳐서 확정하세요. 확정하면 이번 주 모든 참여자에게 이 말씀이 그대로 보여요.</div>
+      <h2 class="block-title" style="margin-bottom:4px;">📖 말씀 확정</h2>
+      <div class="hint">요일별 말씀을 확인하고, 필요하면 성구·본문·주제를 직접 고쳐서 확정하세요. 토요일에 "다음 주" 탭에서 미리 확정해두면, 일요일 00시가 지나는 순간 자동으로 반영돼요.</div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="chip-btn active" id="weekTabThis" data-offset="0">이번 주</button>
+        <button class="chip-btn" id="weekTabNext" data-offset="1">다음 주</button>
+      </div>
     </div>
-    ${versePlanRows}
-    <button class="btn-small" id="verseConfirmBtn" style="width:100%; text-align:center; margin-bottom:22px;">이번 주 말씀 확정하기</button>
-    <div id="verseConfirmMsg" style="margin-bottom:22px; font-size:13px;"></div>
+    <div id="versePlanContainer"></div>
   ` : "";
 
   const adminHtml = (profile && profile.name === ADMIN_NAME) ? `
@@ -2651,31 +2806,17 @@ async function openArchive(){
       btn.disabled = false; btn.textContent = "점수 반영하기";
     };
 
-    document.getElementById("verseConfirmBtn").onclick = async () => {
-      const btn = document.getElementById("verseConfirmBtn");
-      const msg = document.getElementById("verseConfirmMsg");
-      btn.disabled = true; btn.textContent = "저장 중…";
-      try{
-        const wKey = dateKey(weekStartDate(now));
-        const days = {};
-        document.querySelectorAll(".verse-plan-ref").forEach(el => {
-          const d = el.dataset.date;
-          const ref = el.value.trim();
-          const text = document.querySelector(`.verse-plan-text[data-date="${d}"]`).value.trim();
-          const theme = document.querySelector(`.verse-plan-theme[data-date="${d}"]`).value;
-          days[d] = {ref, text, theme};
-        });
-        await saveWeeklyVersePlan(wKey, days, profile.name);
-        if(days[today] && days[today].text && days[today].ref){
-          verse = days[today];
-          recomputeReflectQs();
-        }
-        msg.innerHTML = `<span style="color:var(--ok); font-weight:700;">✓ 이번 주 말씀이 확정됐어요. 오늘 화면에도 바로 반영돼요.</span>`;
-      }catch(e){
-        msg.innerHTML = `<span style="color:#C0392B;">저장 중 오류가 발생했어요. 다시 시도해주세요.</span>`;
-      }
-      btn.disabled = false; btn.textContent = "이번 주 말씀 확정하기";
+    document.getElementById("weekTabThis").onclick = () => {
+      document.getElementById("weekTabThis").classList.add("active");
+      document.getElementById("weekTabNext").classList.remove("active");
+      renderVersePlanContainer(0, profile.name);
     };
+    document.getElementById("weekTabNext").onclick = () => {
+      document.getElementById("weekTabNext").classList.add("active");
+      document.getElementById("weekTabThis").classList.remove("active");
+      renderVersePlanContainer(1, profile.name);
+    };
+    renderVersePlanContainer(0, profile.name);
   }
 
   document.getElementById("profileSaveBtn").onclick = async () => {
